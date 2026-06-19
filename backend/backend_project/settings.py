@@ -75,6 +75,17 @@ railway_domain = os.getenv('RAILWAY_PUBLIC_DOMAIN', '')
 if railway_domain:
     ALLOWED_HOSTS.append(railway_domain)
 
+# Hosts provided via environment (comma-separated)
+env_allowed_hosts = os.getenv('ALLOWED_HOSTS', '')
+if env_allowed_hosts:
+    ALLOWED_HOSTS += [h.strip() for h in env_allowed_hosts.split(',') if h.strip()]
+
+# Trust env hosts for CSRF (HTTPS terminated at the reverse proxy)
+CSRF_TRUSTED_ORIGINS = [
+    f'https://{h}' for h in ALLOWED_HOSTS
+    if h not in ('localhost', '127.0.0.1') and not h.startswith('.')
+]
+
 # Application definition
 INSTALLED_APPS = [
     'django.contrib.admin',

@@ -591,19 +591,19 @@ def call_ai_direct(claim_text: str, additional_evidence: Optional[Dict[str, Any]
     Ini adalah fallback method yang selalu tersedia.
     """
     import os
-    from google import genai
-    
-    api_key = os.getenv('GEMINI_API_KEY')
+    from openai import OpenAI
+
+    api_key = os.getenv('OPENAI_API_KEY')
     if not api_key:
-        logger.error("GEMINI_API_KEY not set")
+        logger.error("OPENAI_API_KEY not set")
         return {
             'label': 'unverified',
             'confidence': None,
             'summary': 'API key not configured',
             'sources': []
         }
-    
-    client = genai.Client(api_key=api_key)
+
+    client = OpenAI(api_key=api_key)
     
     # Enhanced prompt for health claim verification
     prompt = f"""Kamu adalah ahli verifikasi klaim kesehatan. Verifikasi klaim berikut berdasarkan konsensus ilmiah dan jurnal medis.
@@ -628,18 +628,17 @@ Panduan label:
 Berikan analisis berdasarkan fakta ilmiah, bukan opini."""
 
     try:
-        response = client.models.generate_content(
-            model='gemini-2.0-flash',  
-            contents=prompt,
-            config={
-                'temperature': 0.2,
-                'max_output_tokens': 2048,
-            }
+        response = client.chat.completions.create(
+            model='gpt-4o-mini',
+            messages=[{'role': 'user', 'content': prompt}],
+            temperature=0.2,
+            max_tokens=2048,
+            response_format={'type': 'json_object'},
         )
-        
+
         # Parse JSON dari response
         import json
-        result_text = response.text.strip()
+        result_text = response.choices[0].message.content.strip()
         
         # Hapus markdown code block jika ada
         if result_text.startswith('```'):
