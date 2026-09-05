@@ -32,6 +32,8 @@ if not VERIFY_SCRIPT.exists():
     logger.warning("Will use direct AI call method")
 
 
+from .version import VERIFICATION_LOGIC_VERSION  # noqa: F401
+
 # Configuration
 VERIFICATION_TIMEOUT = 90  
 MAX_RETRIES = 2
@@ -238,11 +240,35 @@ def normalize_ai_response(ai_result: Dict[str, Any], claim_text: str = "") -> Di
     logger.info(f"[NORMALIZE] Raw label: {raw_label} (mapped: {mapped_label}), Confidence: {confidence:.2f}")
     logger.info(f"[NORMALIZE] Has journal: {has_journal}, Total sources: {len(sources)}")
     
-    # Jika AI sudah sangat yakin bahwa klaim adalah HOAX, jangan dibalik menjadi VALID
+    # Penilaian AI tidak boleh "dinaikkan" oleh tangga confidence.
+    #
+    # `confidence` dari model adalah keyakinan terhadap penilaiannya sendiri,
+    # bukan probabilitas bahwa klaim itu benar. Sebelumnya model yang menjawab
+    # "uncertain" dengan confidence tinggi (mis. yakin bahwa bukti tidak
+    # membahas klaim) tetap dipromosikan menjadi VALID oleh tangga confidence —
+    # sistem bisa melabeli FAKTA untuk klaim yang justru tidak didukung bukti.
+    #
+    # Aturan sekarang:
+    #   hoax                  -> tetap HOAX (tidak pernah dibalik)
+    #   uncertain/unverified  -> tidak pernah dipromosikan ke VALID
+    #   valid                 -> tangga confidence tetap berlaku, dan hanya
+    #                            dapat MENURUNKAN label (butuh jurnal + skor)
     if mapped_label == 'hoax':
         final_label = 'hoax'
         final_confidence = confidence
-        logger.info("[NORMALIZE] Final label forced to HOAX based on AI raw label")
+        logger.info("[NORMALIZE] Final label tetap HOAX sesuai penilaian AI")
+    elif mapped_label in ('uncertain', 'unverified'):
+        # Tetap wajibkan keberadaan jurnal seperti aturan lama.
+        if not has_journal or not is_health_related_claim(claim_text, combined_summary):
+            final_label = 'unverified'
+            final_confidence = None
+        else:
+            final_label = mapped_label
+            final_confidence = confidence if final_label != 'unverified' else None
+        logger.info(
+            "[NORMALIZE] Penilaian AI '%s' dipertahankan (tidak dipromosikan ke VALID)",
+            mapped_label,
+        )
     else:
         # Determine final label dengan improved logic (termasuk heuristic merokok-kanker)
         final_label = determine_verification_label(
@@ -256,6 +282,13 @@ def normalize_ai_response(ai_result: Dict[str, Any], claim_text: str = "") -> Di
         # IMPORTANT: Jika label unverified, set confidence ke None
         final_confidence = confidence if final_label != 'unverified' else None
     
+    # Label UNVERIFIED berarti sistem tidak dapat menyimpulkan apa pun. Tetap
+    # melampirkan daftar sumber membantah label itu sendiri: pembaca melihat
+    # referensi seolah klaimnya tertelusur, padahal justru sebaliknya.
+    if final_label == 'unverified' and sources:
+        logger.info("[NORMALIZE] %d sumber dilepas karena label UNVERIFIED", len(sources))
+        sources = []
+
     logger.info(f"[NORMALIZE] Final: label={final_label}, confidence={final_confidence}")
     
     return {
@@ -272,12 +305,31 @@ def normalize_ai_response(ai_result: Dict[str, Any], claim_text: str = "") -> Di
     }
 
 
-def extract_sources(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+def extract_sources(result: Dict[str, Any], trusted: bool = False) -> List[Dict[str, Any]]:
     """
-    Ekstrak sources dari result dictionary dengan normalisasi.
+    Ekstrak sources dari result dictionary dengan normalisasi + VALIDASI LINK.
+
+    PENTING (perbaikan anti-404):
+        Sebelumnya DOI yang datang dari LLM langsung diubah menjadi
+        `https://doi.org/<doi>` tanpa pernah dicek. Akibatnya user bisa
+        menerima link DOI yang tidak ada / 404.
+
+        Sekarang setiap DOI dan URL divalidasi lewat
+        `api.intelligence.evidence.link_validator`:
+          - format DOI ngawur   -> sumber dibuang
+          - DOI tidak terdaftar -> sumber dibuang
+          - tidak bisa dicek    -> DOI disimpan sebagai metadata, tetapi
+                                   URL TIDAK diberikan (kecuali `trusted=True`
+                                   untuk sumber dari knowledge base sendiri)
+
+    Args:
+        trusted: True bila sumber berasal dari knowledge base Healthify
+            (kurasi admin / indeks vektor), bukan karangan LLM.
     """
+    from .intelligence.evidence import link_validator as lv
+
     sources = []
-    
+
     sources_raw = (
         result.get("sources") or 
         result.get("neighbors") or 
@@ -290,21 +342,41 @@ def extract_sources(result: Dict[str, Any]) -> List[Dict[str, Any]]:
         logger.warning(f"sources is not a list: {type(sources_raw)}")
         return []
     
+    dropped = 0
     for src in sources_raw:
         if not isinstance(src, dict):
             continue
         
-        doi = (src.get("doi") or "").strip()
-        url = (src.get("url") or "").strip()
+        raw_doi = (src.get("doi") or "").strip()
+        raw_url = (src.get("url") or "").strip()
         safe_id = (src.get("safe_id") or "").strip()
+        is_trusted = bool(trusted or src.get("_from_dispute") or src.get("_trusted"))
 
-        # Jika tidak ada DOI, lakukan cek ringan untuk menghindari link yang jelas-jelas 404/5xx
-        if not doi and url:
-            url = validate_url(url)
-        
+        validated = lv.validate_reference(raw_doi, raw_url, trust_on_unknown=is_trusted)
+        doi = validated["doi"]
+        url = validated["url"]
+
+        # Sumber yang mengklaim DOI tapi DOI-nya tidak sah/ tidak ada -> buang.
+        if raw_doi and not doi:
+            dropped += 1
+            logger.warning(
+                "[SOURCES] Sumber dibuang karena DOI tidak dapat diverifikasi (%s): %r",
+                validated["link_status"], raw_doi[:120],
+            )
+            continue
+
+        # Sumber non-DOI yang link-nya dipastikan mati -> buang.
+        if raw_url and not url and validated["link_status"] in (
+            lv.STATUS_UNRESOLVABLE, lv.STATUS_MALFORMED
+        ):
+            dropped += 1
+            logger.info("[SOURCES] Sumber dibuang karena URL tidak dapat dijangkau: %s", raw_url[:120])
+            continue
+
         # Minimal identifier supaya bisa dilacak di frontend / database
         identifier = doi or url or safe_id
         if not identifier:
+            dropped += 1
             continue
         
         raw_title = src.get("title") or safe_id or "Unknown"
@@ -317,17 +389,22 @@ def extract_sources(result: Dict[str, Any]) -> List[Dict[str, Any]]:
         source_obj = {
             "title": raw_title,
             "doi": doi,
-            "url": (f"https://doi.org/{doi}" if doi else url),
+            "url": url,
             "relevance_score": safe_float(
                 src.get("relevance_score", src.get("relevance", 0.0)),
                 default=0.0,
             ),
             "excerpt": excerpt,
             "source_type": src.get("source_type", "journal"),
+            "_doi_verified": validated["doi_verified"],
+            "_link_status": validated["link_status"],
         }
         
         sources.append(source_obj)
-    
+
+    if dropped:
+        logger.info("[SOURCES] %d sumber dibuang karena gagal validasi link", dropped)
+
     # Urutkan dari yang paling relevan dan ambil maksimal 5 untuk ditampilkan di frontend
     sources.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
     return sources[:5]
@@ -511,8 +588,10 @@ def call_ai_verify_direct_optimized(claim_text: str) -> Dict[str, Any]:
         # Get summary
         summary = payload.get("summary", "") or payload.get("conclusion", "") or ""
         
-        # Get sources from evidence or references
-        sources = extract_sources(payload)
+        # Get sources from evidence or references.
+        # trusted=True: payload berasal dari pipeline RAG training (knowledge base
+        # + indeks vektor), bukan karangan LLM.
+        sources = extract_sources(payload, trusted=True)
         
         logger.info(f"[PARSE] Label: {raw_label} -> {mapped_label}, Confidence: {confidence}, Sources: {len(sources)}")
         
@@ -585,13 +664,104 @@ def call_ai_verify(claim_text: str, additional_evidence: Optional[Dict[str, Any]
     result = call_ai_direct(claim_text, additional_evidence)
     return normalize_ai_response(result, claim_text)
 
+def retrieve_grounding_evidence(claim_text: str, limit: int = 8) -> List[Dict[str, Any]]:
+    """
+    Ambil evidence NYATA dari knowledge base Healthify untuk menjadi grounding
+    verifikasi klaim.
+
+    Memakai ulang seluruh sumber pengetahuan yang sudah ada (JournalArticle,
+    Source/ClaimSource, dan indeks pgvector bila tersedia) melalui
+    `api.intelligence.retrieval`. Tidak ada sumber baru yang dibuat di sini.
+    """
+    try:
+        from .intelligence.contracts import EvidenceStatus
+        from .intelligence.evidence.selector import select_evidence
+        from .intelligence.retrieval.acquisition import (
+            build_topic_phrase,
+            coverage_is_thin,
+            ensure_coverage,
+        )
+        from .intelligence.retrieval.concepts import extract_health_concepts
+        from .intelligence.retrieval.retriever import retrieve_candidates
+
+        terms = extract_health_concepts(claim_text)
+        candidates = retrieve_candidates(claim_text, extra_terms=terms)
+        selected, status = select_evidence(candidates, context_terms=terms, limit=limit)
+
+        # Klaim kesehatan yang tidak menemukan bukti berarti topiknya belum
+        # terwakili di basis pengetahuan. Melengkapi sendiri lalu mencoba
+        # sekali lagi jauh lebih berguna daripada melabeli klaim yang jelas
+        # benar sebagai "tidak pasti" hanya karena bahan bacaannya belum ada.
+        thin = (status == EvidenceStatus.INSUFFICIENT_EVIDENCE
+                or coverage_is_thin(claim_text, selected))
+        if thin:
+            ensure_coverage(claim_text)
+            # Lihat catatan yang sama di engine: percobaan ulang memakai istilah
+            # Inggris, dan berjalan baik ada jurnal baru maupun tidak.
+            topic = build_topic_phrase(claim_text)
+            if topic:
+                retry_terms = list(terms) + topic.split()
+                candidates = retrieve_candidates(claim_text, extra_terms=retry_terms)
+                selected, status = select_evidence(
+                    candidates, context_terms=terms, limit=limit)
+
+        logger.info(
+            "[GROUNDING] %d evidence terpilih dari knowledge base (status=%s)",
+            len(selected), status.value,
+        )
+        return [
+            {
+                "title": item.title,
+                "doi": item.doi,
+                "url": item.url,
+                "snippet": item.snippet[:900],
+                "authors": item.authors,
+                "publisher": item.publisher,
+                "relevance_score": item.relevance,
+                "source_type": item.source_type,
+                "_trusted": True,
+            }
+            for item in selected
+        ]
+    except Exception as e:
+        logger.warning(f"[GROUNDING] Retrieval knowledge base gagal: {e}")
+        return []
+
+
 def call_ai_direct(claim_text: str, additional_evidence: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Direct call ke AI API tanpa menggunakan training script.
     Ini adalah fallback method yang selalu tersedia.
+
+    PERBAIKAN PENTING (anti-halusinasi sumber):
+        Sebelumnya LLM diminta ikut menuliskan daftar `sources` — inilah asal
+        DOI karangan yang berujung 404. Sekarang:
+
+        1. Evidence diambil DULU dari knowledge base Healthify.
+        2. LLM hanya menilai klaim TERHADAP evidence tersebut.
+        3. Daftar `sources` yang dikembalikan berasal dari evidence nyata,
+           BUKAN dari keluaran LLM.
+        4. Bila tidak ada evidence sama sekali, sistem tidak menebak:
+           label langsung `unverified`.
     """
     import os
     from openai import OpenAI
+
+    evidence = retrieve_grounding_evidence(claim_text)
+
+    # Tanpa evidence, sistem TIDAK meminta LLM menebak (lihat §16).
+    if not evidence:
+        logger.info("[VERIFY] Tidak ada evidence di knowledge base -> unverified")
+        return {
+            'label': 'unverified',
+            'confidence': None,
+            'summary': (
+                'Belum ditemukan sumber ilmiah yang relevan di basis pengetahuan '
+                'Healthify untuk memverifikasi klaim ini. Sistem tidak memberikan '
+                'kesimpulan tanpa bukti pendukung.'
+            ),
+            'sources': []
+        }
 
     api_key = os.getenv('OPENAI_API_KEY')
     if not api_key:
@@ -600,40 +770,50 @@ def call_ai_direct(claim_text: str, additional_evidence: Optional[Dict[str, Any]
             'label': 'unverified',
             'confidence': None,
             'summary': 'API key not configured',
-            'sources': []
+            'sources': evidence,
         }
 
     client = OpenAI(api_key=api_key)
-    
-    # Enhanced prompt for health claim verification
-    prompt = f"""Kamu adalah ahli verifikasi klaim kesehatan. Verifikasi klaim berikut berdasarkan konsensus ilmiah dan jurnal medis.
+
+    evidence_block = "\n\n".join(
+        f"[E{idx}] {item['title']}\n{item['snippet']}"
+        for idx, item in enumerate(evidence, start=1)
+    )
+
+    prompt = f"""Kamu adalah ahli verifikasi klaim kesehatan. Nilai klaim berikut HANYA berdasarkan EVIDENCE yang diberikan.
 
 Klaim: "{claim_text}"
 
-Analisis klaim ini dan berikan respons dalam format JSON:
+EVIDENCE (satu-satunya sumber yang boleh dipakai):
+{evidence_block}
+
+Aturan mutlak:
+- DILARANG menyebut, mengarang, atau menambahkan sumber, DOI, URL, nama jurnal, penulis, atau tahun yang tidak ada di EVIDENCE di atas.
+- Jangan menuliskan daftar pustaka. Sumber ditampilkan terpisah oleh sistem.
+- Jika EVIDENCE tidak membahas hubungan yang diklaim, gunakan label "uncertain".
+
+Berikan respons dalam format JSON:
 {{
     "label": "valid|hoax|uncertain",
-    "confidence": 0.0-1.0,
-    "summary": "Penjelasan singkat dalam bahasa Indonesia mengapa klaim ini valid/hoax/uncertain. Jelaskan bukti ilmiah yang mendukung atau menyanggah.",
-    "sources": [
-        {{"title": "Judul sumber/studi", "url": "link jika ada", "doi": "DOI jika ada"}}
-    ]
+    "confidence": 0.0-1.0,   // seberapa yakin klaim ini BENAR (bukan seberapa yakin pada penilaianmu). Untuk "uncertain" isi sekitar 0.5.
+    "summary": "Penjelasan 2-5 kalimat dalam bahasa Indonesia untuk pembaca awam. Tulis seperti penjelasan biasa: JANGAN menyebut kata \"EVIDENCE\", \"E1\", \"sumber yang diberikan\", atau membahas proses penilaian. Bila merujuk sumber, letakkan penanda [E1]/[E2] di AKHIR kalimat. Jangan menulis nama jurnal, penulis, atau tahun."
 }}
 
 Panduan label:
-- "valid": Klaim didukung oleh bukti ilmiah kuat
-- "hoax": Klaim bertentangan dengan konsensus ilmiah
-- "uncertain": Tidak cukup bukti atau masih diperdebatkan
-
-Berikan analisis berdasarkan fakta ilmiah, bukan opini."""
+- "valid": EVIDENCE secara langsung mendukung klaim
+- "hoax": EVIDENCE secara langsung membantah klaim
+- "uncertain": EVIDENCE tidak cukup atau tidak membahas klaim ini"""
 
     try:
+        from .intelligence.reasoning.llm import completion_token_kwargs, openai_model
+
+        model = openai_model()
         response = client.chat.completions.create(
-            model='gpt-4o-mini',
+            model=model,
             messages=[{'role': 'user', 'content': prompt}],
             temperature=0.2,
-            max_tokens=2048,
             response_format={'type': 'json_object'},
+            **completion_token_kwargs(model, 2048),
         )
 
         # Parse JSON dari response
@@ -647,17 +827,47 @@ Berikan analisis berdasarkan fakta ilmiah, bukan opini."""
                 result_text = result_text[4:]
         
         result = json.loads(result_text.strip())
+
+        # Sumber SELALU berasal dari knowledge base, tidak pernah dari LLM.
+        result['sources'] = evidence
+        result['summary'] = strip_fabricated_references(result.get('summary', ''), evidence)
         return result
         
     except Exception as e:
         logger.error(f"Direct AI call failed: {e}")
         # Return minimal valid response
         return {
-            'label': 'Not Enough Info',
-            'confidence': 0.5,
+            'label': 'unverified',
+            'confidence': None,
             'summary': f'Unable to verify claim due to technical error: {str(e)}',
-            'sources': []
+            'sources': evidence,
         }
+
+
+_URL_IN_TEXT_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+_DOI_IN_TEXT_RE = re.compile(r"\b(?:doi:\s*)?10\.\d{4,9}/\S+", re.IGNORECASE)
+
+
+def strip_fabricated_references(text: str, evidence: List[Dict[str, Any]]) -> str:
+    """
+    Buang URL/DOI apa pun yang ditulis LLM di badan ringkasan dan tidak ada di
+    daftar evidence. Ini menutup celah terakhir DOI karangan bocor ke user.
+    """
+    allowed_dois = {(e.get('doi') or '').lower() for e in (evidence or []) if e.get('doi')}
+    allowed_urls = {(e.get('url') or '').lower() for e in (evidence or []) if e.get('url')}
+
+    def keep_url(match):
+        return match.group(0) if match.group(0).lower() in allowed_urls else ""
+
+    def keep_doi(match):
+        normalized = re.sub(r"^doi:\s*", "", match.group(0), flags=re.IGNORECASE).lower()
+        return match.group(0) if normalized in allowed_dois else ""
+
+    cleaned = _URL_IN_TEXT_RE.sub(keep_url, text or "")
+    cleaned = _DOI_IN_TEXT_RE.sub(keep_doi, cleaned)
+    cleaned = re.sub(r"\(\s*[,;]?\s*\)", "", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
 
 def call_ai_verify_with_evidence(claim_text: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
     """

@@ -11,6 +11,8 @@ from django.db import transaction
 from django.utils import timezone
 from django.http import Http404
 from django.conf import settings
+import os
+
 from semanticscholar import SemanticScholar
 
 # IMPORT MODELS 
@@ -43,7 +45,7 @@ def fetch_evidence_from_doi(doi: str) -> Dict[str, Any]:
     try:
         # CrossRef API
         url = f"https://api.crossref.org/works/{doi}"
-        headers = {'User-Agent': 'Healthify/1.0 (mailto:admin@healthify.cloud)'}
+        headers = {'User-Agent': f"Healthify/1.0 (mailto:{os.getenv('CROSSREF_MAILTO', '')})"}
         
         response = requests.get(url, headers=headers, timeout=10)
         

@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import Toast from '../../components/Toast';
 import '../../index.css';
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.healthify.cloud/api' || 'http://localhost:8000/api';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 const AdminLogin = () => {
     const [username, setUsername] = useState("");

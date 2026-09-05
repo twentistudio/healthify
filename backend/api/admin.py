@@ -1,7 +1,16 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
-from .models import Source, Claim, ClaimSource, VerificationResult, FAQItem, Dispute
+from .models import (
+    ApiAccessRequest,
+    Claim,
+    ClaimSource,
+    Dispute,
+    FAQItem,
+    IntelligenceApiKey,
+    Source,
+    VerificationResult,
+)
 
 # admin untuk source
 @admin.register(Source)
@@ -125,3 +134,34 @@ class FAQItemAdmin(admin.ModelAdmin):
     list_editable = ('order', 'published')
     search_fields = ('question', 'answer')
     ordering = ('order',)
+
+@admin.register(ApiAccessRequest)
+class ApiAccessRequestAdmin(admin.ModelAdmin):
+    """
+    Peninjauan permintaan akses API.
+
+    Menyetujui di sini TIDAK menerbitkan kunci. Kunci diterbitkan lewat
+    `python manage.py issue_api_key --consumer <nama> --request <id>`, supaya
+    nilainya hanya pernah muncul sekali di terminal operator dan tidak tersimpan
+    di mana pun, termasuk di layar admin.
+    """
+
+    list_display = ("email", "name", "organization", "status", "created_at")
+    list_filter = ("status", "created_at")
+    search_fields = ("email", "name", "organization", "use_case")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(IntelligenceApiKey)
+class IntelligenceApiKeyAdmin(admin.ModelAdmin):
+    """
+    Daftar kunci API. Nilai asli kunci tidak disimpan dan tidak dapat
+    ditampilkan ulang; yang terlihat hanya beberapa karakter awalnya.
+    """
+
+    list_display = ("consumer", "label", "key_prefix", "is_active", "rate",
+                    "last_used_at", "created_at")
+    list_filter = ("is_active", "consumer")
+    search_fields = ("consumer", "label", "key_prefix")
+    readonly_fields = ("key_hash", "key_prefix", "created_at", "last_used_at",
+                       "revoked_at")

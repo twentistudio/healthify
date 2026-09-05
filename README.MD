@@ -2,7 +2,9 @@
 
 ## AI Health Claim Verification System
 
-Healtify App adalah aplikasi AI Health Detector berbasis web yang memverifikasi klaim kesehatan menggunakan pendekatan **Retrieval Augmented Generation (RAG)** dengan **Large Language Models (LLMs) Gemini**.
+Healtify App adalah aplikasi AI Health Detector berbasis web yang memverifikasi klaim kesehatan menggunakan pendekatan **Retrieval Augmented Generation (RAG)** dengan **Large Language Models (LLMs)**.
+
+Deployment saat ini berjalan **penuh di atas OpenAI** (`gpt-5.4-mini` untuk penalaran & terjemahan, `text-embedding-3-small` untuk embedding). Penyedia lain tetap didukung lewat konfigurasi, tanpa perubahan kode.
 
 ### ✨ Fitur Utama
 
@@ -14,9 +16,119 @@ Healtify App adalah aplikasi AI Health Detector berbasis web yang memverifikasi 
   - ScienceDirect/Elsevier (scientific journals)
   - Google Books (medical textbooks)
   - Open Library (open-access books)
-- 🤖 **AI-Powered Verification**: Menggunakan Gemini untuk analisis klaim
+- 🤖 **AI-Powered Verification**: LLM menganalisis klaim **hanya berdasarkan evidence** yang diambil dari knowledge base
 - 📊 **Evidence-Based**: Menyediakan sumber jurnal ilmiah sebagai bukti
 - 🌐 **REST API**: Backend Django dengan endpoint untuk verifikasi klaim
+
+---
+
+## 🧠 Health Intelligence Engine (kapabilitas tambahan)
+
+Selain produk verifikasi klaim, Healthify mengekspos *health intelligence
+engine*-nya untuk consumer eksternal seperti **HealthTalk**, tanpa mengubah
+satu pun kontrak API yang sudah ada.
+
+| Endpoint | Kegunaan |
+|---|---|
+| `POST /api/v1/intelligence/query` | Pertanyaan / keluhan / klaim kesehatan, mendukung percakapan multi-turn |
+| `POST /api/v1/intelligence/summary` | Ringkasan konsultasi terstruktur beserta provenance |
+| `GET /api/v1/intelligence/sessions/{id}` | Riwayat sesi + health context kumulatif |
+| `GET /api/v1/intelligence/capabilities` | Mode, intent, dan fitur yang didukung |
+
+Kemampuan:
+
+- **Query understanding** — CLAIM_VERIFICATION, SYMPTOM_CONTEXT, HEALTH_INFORMATION,
+  FOLLOW_UP, MEDICATION_INFORMATION, GENERAL_HEALTH, UNSUPPORTED.
+- **Structured health context** — gejala, durasi, keparahan, awitan, obat, alergi,
+  riwayat. Field yang tidak dilaporkan pengguna tetap `null` (tidak dikarang).
+- **Conversation context** — "Saya demam" + "Sudah tiga hari" → `duration = "3 hari"`.
+- **Evidence grounding + provenance** — tiap pernyataan dapat ditelusuri ke sumbernya.
+- **Safety layer** — PASS / MODIFY / BLOCK; mendeteksi sinyal gawat darurat,
+  bahasa diagnosis pasti, anjuran dosis, dan klaim tak berdasar.
+- **Preliminary assessment** — selalu berlabel `PRELIMINARY_ASSESSMENT`, bukan diagnosis.
+- **Consultation summary** — hanya dari informasi yang benar-benar muncul di percakapan.
+
+### 🔒 Integritas sumber (perbaikan link DOI 404)
+
+Sebelumnya DOI yang dihasilkan LLM langsung dijadikan `https://doi.org/<doi>`
+tanpa pernah dicek, sehingga pengguna bisa menerima link 404. Sekarang:
+
+1. `call_ai_direct` mengambil evidence dari knowledge base **lebih dulu**; daftar
+   `sources` berasal dari evidence itu, bukan dari keluaran LLM.
+2. Setiap DOI dinormalisasi, dicek formatnya, lalu diverifikasi ke **DOI Handle
+   System** (fallback Crossref). DOI yang tidak terdaftar **dibuang**.
+3. URL non-DOI dicek via HEAD; 404/410/5xx dibuang.
+4. Jika status tidak dapat dipastikan, `url` dikosongkan — lebih baik tanpa link
+   daripada link mati.
+5. URL/DOI yang ditulis LLM di badan jawaban tapi tidak ada di evidence dihapus.
+6. Tanpa bukti memadai → `INSUFFICIENT_EVIDENCE`, LLM tidak diminta menebak.
+
+### 🛠️ Perkakas operasional
+
+```bash
+# Isi knowledge base dengan artikel jurnal NYATA dari Crossref.
+# Setiap DOI diverifikasi ke registry sebelum disimpan.
+python manage.py import_journals --topics-id --rows 20
+python manage.py import_journals --query "demam berdarah" --query "hipertensi"
+python manage.py import_journals --query "asma" --dry-run    # lihat dulu
+
+# Audit tautan yang SUDAH ada di database (warisan DOI karangan sebelum perbaikan).
+python manage.py audit_source_links                      # laporan saja
+python manage.py audit_source_links --fix                # bersihkan yang rusak
+python manage.py audit_source_links --fix --delete-orphans
+```
+
+> Knowledge base yang kosong membuat sistem selalu menjawab
+> `INSUFFICIENT_EVIDENCE` — perilaku yang benar, tapi tidak berguna.
+> `import_journals` adalah prasyarat operasional setelah deploy.
+
+### 🌐 Pencarian bilingual
+
+Pertanyaan Bahasa Indonesia dicocokkan ke jurnal berbahasa Inggris lewat
+pemetaan istilah deterministik: `demam berdarah` → `dengue fever`,
+`tifus` → `typhoid`, `hipertensi` → `hypertension`, dan seterusnya. Konsep
+kesehatan diberi bobot lebih tinggi daripada kata pengisi kalimat, sehingga
+"Saya demam tinggi tiga hari" tidak tenggelam oleh token "tinggi"/"tiga"/"hari".
+
+### 🔁 Ketahanan provider LLM
+
+Deployment ini disetel `LLM_PROVIDER=openai`, yang bersifat
+**eksklusif** — hanya OpenAI yang dipakai, tidak ada percobaan ke penyedia lain.
+
+Bila nilai itu dikosongkan, seluruh penyedia yang punya kredensial dipakai
+sebagai rantai fallback (`gemini` → `openai` → OpenAI-compatible): provider yang
+gagal dilewati selama 5 menit dan permintaan diteruskan ke berikutnya.
+
+`LLM_PROVIDER` dan `LLM_MODEL` adalah variabel yang **sudah** dipakai
+`training/scripts/prompt_and_verify.py`, jadi satu setelan berlaku untuk backend
+maupun pipeline training — tidak ada nama variabel baru untuk hal yang sama.
+
+Parameter panggilan menyesuaikan keluarga model secara otomatis: GPT-5 ke atas
+menolak `max_tokens` dan memakai `max_completion_tokens`, sehingga model bisa
+diganti lewat `LLM_MODEL` saja tanpa menyentuh kode.
+
+Bila tidak ada penyedia yang berhasil, engine tetap menjawab memakai jalur
+ekstraktif deterministik langsung dari cuplikan evidence — layanan tidak pernah
+mati total karena masalah kredensial.
+
+Tiga jalur yang dulu terikat Gemini kini mengikuti konfigurasi yang sama:
+
+| Jalur | Dulu | Sekarang |
+|---|---|---|
+| Penalaran & verifikasi klaim | Gemini/OpenAI campur | rantai provider terkonfigurasi |
+| Terjemahan `/api/translate/` | Gemini saja — diam-diam mengembalikan teks asli bila kunci tidak ada | rantai provider (OpenAI) |
+| Embedding jurnal & query | `embed_texts_gemini` saja | `text-embedding-3-small` dengan `dimensions=768` agar cocok dengan kolom vektor yang sudah ada — **tanpa migrasi tabel atau re-embed korpus lama** |
+
+### 📖 Dokumentasi API (Scalar)
+
+| URL | Isi |
+|---|---|
+| `/docs` (alias `/api/docs`) | Referensi API interaktif — Scalar |
+| `/openapi.json` (alias `/api/openapi.json`) | Spesifikasi OpenAPI 3.1 |
+
+Detail lebih lanjut:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
+[docs/HEALTHTALK_INTEGRATION.md](docs/HEALTHTALK_INTEGRATION.md)
 
 ---
 

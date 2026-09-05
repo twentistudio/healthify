@@ -74,4 +74,9 @@ training/docker-compose.yml
 /training/data/chunks/
 /training/data/processed/
 
-backend/api/migrations/
+# CATATAN: baris `backend/api/migrations/` DIHAPUS.
+# Aturan itu bertentangan dengan catatan di bagian 'Django specific' di atas
+# dan membuat migrasi baru tidak pernah ter-commit — akibatnya `manage.py migrate`
+# di produksi tidak membuat tabel baru dan endpoint terkait gagal 500.
+# Migrasi 0001-0015 sudah tracked sejak sebelumnya sehingga tidak terdampak;
+# 0016 dan seterusnya kini ter-commit dengan benar.

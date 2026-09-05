@@ -2,6 +2,7 @@ import logging
 
 from django.db import models
 from .text_normalization import normalize_claim_text, generate_semantic_hash
+from .version import VERIFICATION_LOGIC_VERSION
 
 
 # menyimpan sumber referensi seperti doi, url
@@ -137,7 +138,10 @@ class VerificationResult(models.Model):
     reviewer_notes = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    logic_version = models.CharField(max_length=32, default="v2.0", null=True)
+    logic_version = models.CharField(
+        max_length=32, default=VERIFICATION_LOGIC_VERSION, null=True,
+        help_text="Versi mesin yang menghasilkan penilaian ini. Hasil dari versi "
+                  "lama tidak disajikan dari cache.")
 
     def confidence_percent(self):
         """Return confidence as percentage, or None if unverified."""
@@ -327,3 +331,190 @@ class JournalArticle(models.Model):
 
     def __str__(self):
         return f"{self.title[:80]}... ({self.source_portal})"
+
+
+# ============================================================================
+# Health Intelligence Engine — model TAMBAHAN (additive, §23)
+#
+# Semua model di bawah ini BARU. Tidak ada satu pun field/tabel Healthify yang
+# sudah ada diubah atau dihapus. Healthify tetap berjalan penuh tanpa tabel ini
+# (dipakai hanya oleh endpoint /api/v1/intelligence/*).
+# ============================================================================
+
+class ConversationSession(models.Model):
+    """Sesi percakapan multi-turn (dipakai HealthTalk, opsional untuk Healthify)."""
+
+    STATUS_ACTIVE = 'active'
+    STATUS_CLOSED = 'closed'
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_CLOSED, 'Closed'),
+    ]
+
+    session_id = models.CharField(
+        max_length=128, unique=True, db_index=True,
+        help_text="ID sesi dari consumer (mis. HealthTalk). Unik lintas consumer."
+    )
+    consumer = models.CharField(
+        max_length=64, default='healthify',
+        help_text="Nama consumer: healthify | healthtalk | <lainnya>"
+    )
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+
+    # Snapshot HealthContext terakhir (JSON string, portabel lintas backend DB)
+    health_context = models.TextField(blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['session_id']),
+            models.Index(fields=['consumer', 'status']),
+        ]
+
+    def __str__(self):
+        return f"ConversationSession {self.session_id} ({self.consumer})"
+
+
+class ConversationMessage(models.Model):
+    """Satu giliran percakapan dalam sebuah sesi."""
+
+    ROLE_USER = 'user'
+    ROLE_ASSISTANT = 'assistant'
+    ROLE_CHOICES = [
+        (ROLE_USER, 'User'),
+        (ROLE_ASSISTANT, 'Assistant'),
+    ]
+
+    session = models.ForeignKey(
+        ConversationSession, on_delete=models.CASCADE, related_name='messages'
+    )
+    role = models.CharField(max_length=16, choices=ROLE_CHOICES, default=ROLE_USER)
+    content = models.TextField()
+    intent = models.CharField(max_length=48, blank=True, default='')
+    evidence_status = models.CharField(max_length=32, blank=True, default='')
+    safety_decision = models.CharField(max_length=16, blank=True, default='')
+    # Referensi evidence yang dipakai untuk jawaban ini (JSON string)
+    evidence_refs = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at', 'id']
+        indexes = [
+            models.Index(fields=['session', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"[{self.role}] {self.content[:60]}"
+
+
+class ConsultationSummary(models.Model):
+    """Ringkasan terstruktur hasil sebuah sesi konsultasi (§19)."""
+
+    session = models.ForeignKey(
+        ConversationSession, on_delete=models.CASCADE, related_name='summaries'
+    )
+    chief_complaint = models.TextField(blank=True, default='')
+    # Payload lengkap summary (JSON string) — termasuk provenance tiap bagian
+    payload = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name_plural = 'Consultation summaries'
+
+    def __str__(self):
+        return f"Summary for {self.session.session_id} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class ApiAccessRequest(models.Model):
+    """
+    Permintaan akses API dari pengembang luar (§ dokumentasi publik).
+
+    Diisi lewat formulir di halaman dokumentasi. Baris ini bukan kunci: ia
+    hanya catatan permintaan. Kunci diterbitkan terpisah oleh operator dengan
+    `python manage.py issue_api_key`, supaya penerbitan tetap keputusan manusia
+    dan tidak bisa dipicu sendiri oleh pengisi formulir.
+    """
+
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Menunggu peninjauan'),
+        (STATUS_APPROVED, 'Disetujui'),
+        (STATUS_REJECTED, 'Ditolak'),
+    ]
+
+    name = models.CharField(max_length=200)
+    email = models.EmailField(max_length=254)
+    organization = models.CharField(max_length=200, blank=True, default='')
+    use_case = models.TextField()
+    expected_volume = models.CharField(max_length=120, blank=True, default='')
+
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES,
+                              default=STATUS_PENDING, db_index=True)
+    notes = models.TextField(blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'API access request'
+
+    def __str__(self):
+        return f"{self.email} ({self.status})"
+
+
+class IntelligenceApiKey(models.Model):
+    """
+    Kunci API untuk endpoint Intelligence.
+
+    Kunci TIDAK disimpan dalam bentuk aslinya. Yang tersimpan hanya SHA-256
+    miliknya, sehingga bocornya isi database tidak membocorkan kunci yang masih
+    berlaku. Nilai aslinya hanya ditampilkan sekali, saat diterbitkan.
+
+    Satu konsumen boleh punya banyak kunci sekaligus: satu per lingkungan
+    (produksi, staging), atau satu per aplikasi, sehingga satu kunci dapat
+    dicabut tanpa mematikan yang lain. Kunci dari variabel lingkungan
+    `INTELLIGENCE_API_KEYS` tetap berlaku berdampingan dengan tabel ini.
+    """
+
+    consumer = models.CharField(max_length=100, db_index=True)
+    label = models.CharField(max_length=200, blank=True, default='',
+                             help_text='Penanda bebas, mis. "backend produksi".')
+    key_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    key_prefix = models.CharField(
+        max_length=16, blank=True, default='',
+        help_text='Beberapa karakter awal kunci, untuk mengenalinya tanpa '
+                  'menyimpan nilai aslinya.')
+
+    rate = models.CharField(
+        max_length=32, blank=True, default='',
+        help_text='Batas laju khusus, mis. "120/min". Kosong = batas bawaan.')
+
+    is_active = models.BooleanField(default=True, db_index=True)
+    request_ref = models.ForeignKey(
+        ApiAccessRequest, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='issued_keys')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Intelligence API key'
+
+    def __str__(self):
+        state = 'aktif' if self.is_active else 'dicabut'
+        return f"{self.consumer} · {self.key_prefix}… ({state})"
+
+    @staticmethod
+    def hash_key(raw_key: str) -> str:
+        import hashlib
+
+        return hashlib.sha256((raw_key or '').strip().encode('utf-8')).hexdigest()

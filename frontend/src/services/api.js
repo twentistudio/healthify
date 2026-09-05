@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.healthify.cloud/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 console.log('🌐 API Base URL:', API_BASE_URL);
 

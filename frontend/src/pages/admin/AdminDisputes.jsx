@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ToastContainer, toast } from 'react-toastify';
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.healthify.cloud/api' ;
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api' ;
 
 const AdminDisputes = () => {
     const navigate = useNavigate();

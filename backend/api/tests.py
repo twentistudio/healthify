@@ -665,7 +665,8 @@ class TranslateAndDuplicateTests(TestCase):
         resp = self.client.post(url, data={}, format="json")
         self.assertEqual(resp.status_code, 400)
 
-    def test_translate_verification_result_success_without_gemini(self):
+    def test_translate_verification_result_without_any_llm_provider(self):
+        """Tanpa penyedia LLM sama sekali, teks asli dikembalikan apa adanya."""
         from django.core.cache import cache
 
         cache.clear()
@@ -678,7 +679,8 @@ class TranslateAndDuplicateTests(TestCase):
             "target_language": "en",
         }
 
-        with patch("api.views.get_gemini_client", return_value=None):
+        with patch("api.views.get_gemini_client", return_value=None), \
+             patch("api.intelligence.reasoning.llm.generate", return_value=None):
             resp = self.client.post(url, data=payload, format="json")
 
         self.assertEqual(resp.status_code, 200)
@@ -686,6 +688,34 @@ class TranslateAndDuplicateTests(TestCase):
         self.assertEqual(data["translated_label"], "FACT")
         self.assertEqual(data["translated_summary"], payload["summary"])
         self.assertEqual(data["translated_claim_text"], payload["claim_text"])
+
+    def test_translate_falls_back_to_openai_when_gemini_absent(self):
+        """Tanpa Gemini, terjemahan tetap jalan lewat rantai provider LLM.
+
+        Sebelumnya fitur ini diam-diam mengembalikan teks asli sehingga tombol
+        ganti bahasa di frontend tampak tidak berfungsi.
+        """
+        from django.core.cache import cache
+
+        cache.clear()
+
+        url = reverse("translate-verification-result")
+        payload = {
+            "label": "FAKTA",
+            "summary": "Ini ringkasan yang cukup panjang untuk melewati batas minimal.",
+            "target_language": "en",
+        }
+
+        with patch("api.views.get_gemini_client", return_value=None), \
+             patch("api.intelligence.reasoning.llm.generate",
+                   return_value="This summary is long enough to pass the threshold."):
+            resp = self.client.post(url, data=payload, format="json")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.json()["translated_summary"],
+            "This summary is long enough to pass the threshold.",
+        )
 
     def test_check_claim_duplicate_finds_exact_match(self):
         Claim.objects.create(text="Vitamin c membantu imunitas")
@@ -1294,7 +1324,10 @@ class AdminInternalMethodTests(TestCase):
             new_confidence=0.8,
             new_summary="updated"
         )
-        self.assertEqual(result["status"], "success")
+        # `_handle_approve` mengembalikan status dispute ('approved'), konsisten
+        # dengan `_handle_reject` yang mengembalikan 'rejected'. Ekspektasi lama
+        # ("success") tidak pernah cocok dengan implementasi.
+        self.assertEqual(result["status"], Dispute.STATUS_APPROVED)
         self.assertTrue(Source.objects.filter(doi="10.4000/manual").exists())
 
 
@@ -1413,11 +1446,16 @@ class AiAdapterUnitTests(TestCase):
                         "label": "verified",
                         "confidence": 0.76,
                         "summary": "Kesimpulan",
-                        "sources": [{"doi": "10.1/x", "relevance_score": 0.9}],
+                        # DOI dengan format sah (10.<4-9 digit>/<suffix>) — DOI
+                        # yang formatnya ngawur kini sengaja ditolak.
+                        "sources": [{"doi": "10.1016/j.test.2020.01.001",
+                                     "relevance_score": 0.9}],
                     }
                 }
 
-        with patch("api.ai_adapter.get_optimized_module", return_value=DummyModule()):
+        with patch("api.ai_adapter.get_optimized_module", return_value=DummyModule()), \
+             patch("api.intelligence.evidence.link_validator.resolve_doi",
+                   return_value="verified"):
             result = ai_adapter.call_ai_verify_direct_optimized("Klaim contoh")
         self.assertEqual(result["label"], "valid")
         self.assertGreaterEqual(result["confidence"], 0.75)
@@ -1465,39 +1503,66 @@ class AiAdapterUnitTests(TestCase):
     def test_normalize_ai_response_hoax_and_valid_paths(self):
         from api.ai_adapter import normalize_ai_response
 
-        hoax = normalize_ai_response(
-            {"label": "false", "confidence": 80, "summary": "s", "sources": [{"doi": "10.1/x"}]},
-            claim_text="Merokok menyebabkan kanker paru",
-        )
+        doi = "10.1016/j.lungcan.2019.05.012"
+
+        with patch("api.intelligence.evidence.link_validator.resolve_doi",
+                   return_value="verified"):
+            hoax = normalize_ai_response(
+                {"label": "false", "confidence": 80, "summary": "s",
+                 "sources": [{"doi": doi}]},
+                claim_text="Merokok menyebabkan kanker paru",
+            )
+            valid = normalize_ai_response(
+                {"label": "valid", "confidence": "80", "summary": "s",
+                 "sources": [{"doi": doi}]},
+                claim_text="Merokok menyebabkan kanker paru",
+            )
+
         self.assertEqual(hoax["label"], "hoax")
         self.assertEqual(hoax["confidence"], 0.8)
-
-        valid = normalize_ai_response(
-            {"label": "valid", "confidence": "80", "summary": "s", "sources": [{"doi": "10.1/x"}]},
-            claim_text="Merokok menyebabkan kanker paru",
-        )
         self.assertEqual(valid["label"], "valid")
         self.assertEqual(valid["confidence"], 0.8)
+
+    def test_normalize_ai_response_drops_unverifiable_doi(self):
+        """DOI karangan tidak boleh lolos menjadi sumber (regresi anti-404)."""
+        from api.ai_adapter import normalize_ai_response
+
+        with patch("api.intelligence.evidence.link_validator.resolve_doi",
+                   return_value="unresolvable"):
+            result = normalize_ai_response(
+                {"label": "valid", "confidence": 90, "summary": "s",
+                 "sources": [{"doi": "10.9999/tidak-ada-doi-ini", "title": "Karangan"}]},
+                claim_text="Vitamin X menyembuhkan penyakit Y",
+            )
+
+        self.assertEqual(result["sources"], [])
+        # Tanpa sumber jurnal terverifikasi, label wajib jatuh ke unverified.
+        self.assertEqual(result["label"], "unverified")
+        self.assertIsNone(result["confidence"])
 
     def test_extract_sources_filters_and_sorts(self):
         from api.ai_adapter import extract_sources
 
-        with patch("api.ai_adapter.requests.head") as mocked_head:
-            mocked_head.return_value.status_code = 404
-            mocked_head.return_value.url = "https://bad"
+        with patch("api.intelligence.evidence.link_validator.check_url",
+                   return_value=("unresolvable", "")):
             sources = extract_sources({"sources": [{"url": "https://bad"}]})
         self.assertEqual(sources, [])
 
-        sources = extract_sources(
-            {
-                "sources": [
-                    {"doi": "10.1/a", "relevance_score": 0.1},
-                    {"doi": "10.1/b", "relevance_score": 0.9},
-                ]
-            }
-        )
-        self.assertEqual(sources[0]["doi"], "10.1/b")
+        doi_a = "10.1016/j.aaa.2020.01.001"
+        doi_b = "10.1016/j.bbb.2020.01.002"
+        with patch("api.intelligence.evidence.link_validator.resolve_doi",
+                   return_value="verified"):
+            sources = extract_sources(
+                {
+                    "sources": [
+                        {"doi": doi_a, "relevance_score": 0.1},
+                        {"doi": doi_b, "relevance_score": 0.9},
+                    ]
+                }
+            )
+        self.assertEqual(sources[0]["doi"], doi_b)
         self.assertTrue(sources[0]["url"].startswith("https://doi.org/"))
+        self.assertTrue(sources[0]["_doi_verified"])
 
 
 class EmailServiceExtendedTests(TestCase):
@@ -1674,3 +1739,53 @@ class AdminPipelineAndJournalsTests(TestCase):
             mocked_sem.return_value.search_paper.return_value = None
             ok_none = view._fetch_similar_journals(claim2)
         self.assertFalse(ok_none)
+
+
+class LabelPromotionGuardTests(TestCase):
+    """Penilaian AI tidak boleh dipromosikan menjadi FAKTA oleh tangga confidence."""
+
+    DOI = "10.1016/j.lungcan.2019.05.012"
+
+    def _normalize(self, label, confidence):
+        from api.ai_adapter import normalize_ai_response
+
+        with patch("api.intelligence.evidence.link_validator.resolve_doi",
+                   return_value="verified"):
+            return normalize_ai_response(
+                {
+                    "label": label,
+                    "confidence": confidence,
+                    "summary": "Bukti yang tersedia tidak membahas hubungan yang diklaim.",
+                    "sources": [{"doi": self.DOI, "title": "Studi terkait"}],
+                },
+                claim_text="Merokok menyebabkan kanker paru",
+            )
+
+    def test_uncertain_with_high_confidence_stays_uncertain(self):
+        """Regresi: dulu ini berubah menjadi 'valid' dan bertentangan dengan ringkasannya."""
+        result = self._normalize("uncertain", 0.98)
+        self.assertEqual(result["label"], "uncertain")
+
+    def test_unverified_is_not_promoted(self):
+        result = self._normalize("inconclusive", 0.95)
+        self.assertEqual(result["label"], "unverified")
+
+    def test_hoax_is_never_flipped(self):
+        result = self._normalize("hoax", 0.95)
+        self.assertEqual(result["label"], "hoax")
+
+    def test_valid_still_follows_confidence_ladder(self):
+        self.assertEqual(self._normalize("valid", 0.9)["label"], "valid")
+        # Confidence rendah tetap menurunkan label meski AI bilang valid.
+        self.assertEqual(self._normalize("valid", 0.4)["label"], "hoax")
+        self.assertEqual(self._normalize("valid", 0.6)["label"], "uncertain")
+
+    def test_uncertain_without_journal_becomes_unverified(self):
+        from api.ai_adapter import normalize_ai_response
+
+        result = normalize_ai_response(
+            {"label": "uncertain", "confidence": 0.9, "summary": "s", "sources": []},
+            claim_text="Merokok menyebabkan kanker paru",
+        )
+        self.assertEqual(result["label"], "unverified")
+        self.assertIsNone(result["confidence"])

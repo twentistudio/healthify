@@ -26,6 +26,21 @@ else:
     # Railway: env vars are injected directly, no .env file needed
     load_dotenv()  # fallback: load from process env or .env in cwd
 
+# Root .env (kredensial aplikasi) — dimuat setelah training/.env.
+# `override=False` (default) menjaga variabel yang sudah ada tetap menang.
+_ROOT_ENV_PATH = BASE_DIR.parent / '.env'
+if _ROOT_ENV_PATH.exists():
+    load_dotenv(dotenv_path=_ROOT_ENV_PATH)
+
+# Normalisasi nama key Gemini.
+# training/.env memakai `GEMINI_API`, sedangkan kode aplikasi membaca
+# `GEMINI_API_KEY`. Tanpa penyelarasan ini fitur Gemini (terjemahan &
+# embedding) diam-diam mati dan sistem jatuh ke provider lain.
+if not os.getenv('GEMINI_API_KEY'):
+    _gemini_alias = os.getenv('GEMINI_API') or os.getenv('GOOGLE_API_KEY')
+    if _gemini_alias:
+        os.environ['GEMINI_API_KEY'] = _gemini_alias
+
 # Email Configuration (di bagian bawah file, sebelum LOGGING)
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
@@ -61,24 +76,34 @@ if not SECRET_KEY:
 # SECURITY WARNING
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = [
-    "healthify.cloud",
-    "www.healthify.cloud", 
-    "api.healthify.cloud",
-    "localhost",
-    "127.0.0.1",
-    ".railway.app",  # Railway auto-generated domains
-]
+# TLS diterminasi di reverse proxy. Tanpa ini `request.is_secure()` selalu False
+# dan URL absolut yang dibentuk Django memakai skema http — memicu blokir
+# Mixed Content di halaman yang dilayani lewat https.
+# Aman karena nginx di depan SELALU menulis ulang header ini (lihat nginx.conf).
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+# X-Forwarded-Host TIDAK dipercaya secara default: nginx sudah meneruskan
+# header Host yang benar, sehingga mempercayainya hanya menambah permukaan
+# host-header injection tanpa manfaat.
+USE_X_FORWARDED_HOST = os.getenv('USE_X_FORWARDED_HOST', 'False') == 'True'
 
-# Railway injects RAILWAY_PUBLIC_DOMAIN (without scheme)
-railway_domain = os.getenv('RAILWAY_PUBLIC_DOMAIN', '')
-if railway_domain:
-    ALLOWED_HOSTS.append(railway_domain)
+# Host yang dilayani sepenuhnya ditentukan environment — tidak ada domain
+# yang di-hardcode. Wildcard seperti ".railway.app" sengaja TIDAK dipakai:
+# itu menerima Host header dari subdomain mana pun milik penyedia tersebut.
+#
+# `localhost`/`127.0.0.1` tetap ada karena dipakai health check container.
+ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 # Hosts provided via environment (comma-separated)
 env_allowed_hosts = os.getenv('ALLOWED_HOSTS', '')
 if env_allowed_hosts:
     ALLOWED_HOSTS += [h.strip() for h in env_allowed_hosts.split(',') if h.strip()]
+
+# Railway menyuntikkan RAILWAY_PUBLIC_DOMAIN (tanpa skema) — host persis, bukan wildcard.
+railway_domain = os.getenv('RAILWAY_PUBLIC_DOMAIN', '').strip()
+if railway_domain:
+    ALLOWED_HOSTS.append(railway_domain)
+
+ALLOWED_HOSTS = list(dict.fromkeys(h for h in ALLOWED_HOSTS if h))
 
 # Trust env hosts for CSRF (HTTPS terminated at the reverse proxy)
 CSRF_TRUSTED_ORIGINS = [
@@ -215,26 +240,55 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS Settings
-CORS_ALLOWED_ORIGINS = [
-    "https://healthify.cloud",
-    "https://www.healthify.cloud",
-]
+# ---------------------------------------------------------------------------
+# CORS
+#
+# Daftar origin sepenuhnya eksplisit dan berasal dari environment.
+#
+# Yang DIHAPUS dan alasannya:
+#   * domain yang di-hardcode -> setiap deployment mengaturnya sendiri.
+#   * CORS_ALLOWED_ORIGIN_REGEXES = [r'^https://.*\.vercel\.app$']
+#     Pola ini menerima SETIAP subdomain vercel.app. Dikombinasikan dengan
+#     CORS_ALLOW_CREDENTIALS = True, siapa pun dapat menerbitkan situs di
+#     vercel.app lalu membaca respons API ini atas nama pengunjung yang login.
+#     Wildcard origin tidak boleh dipakai bersama kredensial.
+# ---------------------------------------------------------------------------
+CORS_ALLOWED_ORIGINS = []
 
-frontend_url = os.getenv('FRONTEND_URL')
-if frontend_url:
-    CORS_ALLOWED_ORIGINS.append(frontend_url.rstrip('/'))
+# FRONTEND_URL menerima satu origin ATAU beberapa origin dipisah koma,
+# sehingga origin consumer eksternal (mis. HealthTalk) tidak butuh variabel
+# tersendiri. Satu nilai tunggal tetap bekerja seperti sebelumnya.
+for _source in (os.getenv('FRONTEND_URL', ''), os.getenv('CORS_ALLOWED_ORIGINS', '')):
+    CORS_ALLOWED_ORIGINS += [
+        origin.strip().rstrip('/')
+        for origin in _source.split(',')
+        if origin.strip()
+    ]
 
-# Railway: auto-add CORS for railway.app domains
 if railway_domain:
     CORS_ALLOWED_ORIGINS.append(f'https://{railway_domain}')
 
-# Vercel: allow all vercel.app preview deployments
+CORS_ALLOWED_ORIGINS = list(dict.fromkeys(o for o in CORS_ALLOWED_ORIGINS if o))
+
+# Regex origin hanya aktif bila diisi eksplisit lewat environment, dan tidak
+# pernah berbarengan dengan kredensial (lihat CORS_ALLOW_CREDENTIALS di bawah).
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r'^https://.*\.vercel\.app$',
+    pattern.strip()
+    for pattern in os.getenv('CORS_ALLOWED_ORIGIN_REGEXES', '').split(',')
+    if pattern.strip()
 ]
 
-CORS_ALLOW_CREDENTIALS = True
+# Frontend Healthify mengirim token lewat header Authorization, bukan cookie,
+# dan consumer eksternal memakai X-API-Key. Tidak ada yang memerlukan kredensial
+# lintas origin, jadi dimatikan — sekaligus menutup kelas serangan di atas.
+CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'False') == 'True'
+
+if CORS_ALLOW_CREDENTIALS and CORS_ALLOWED_ORIGIN_REGEXES:
+    raise ValueError(
+        "CORS_ALLOW_CREDENTIALS tidak boleh aktif bersamaan dengan "
+        "CORS_ALLOWED_ORIGIN_REGEXES: pola origin dapat mencocokkan domain "
+        "milik pihak lain."
+    )
 
 CORS_ALLOW_METHODS = [
     'GET',
@@ -244,6 +298,8 @@ CORS_ALLOW_METHODS = [
     'DELETE',
     'OPTIONS'
 ]
+
+CORS_EXPOSE_HEADERS = ['x-request-id', 'x-idempotent-replay', 'retry-after']
 
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -268,6 +324,17 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+
+    # Batas laju untuk endpoint intelligence (per API key consumer).
+    # Setiap permintaan memanggil LLM + embedding berbayar, jadi tanpa batas
+    # satu consumer bisa menghabiskan kuota milik Healthify.
+    'DEFAULT_THROTTLE_RATES': {
+        'intelligence': os.getenv('INTELLIGENCE_RATE_LIMIT', '60/min'),
+        # Formulir permintaan akses terbuka tanpa kunci, karena memang
+        # ditujukan bagi yang belum punya. Batas per IP menjaganya dari
+        # pengiriman massal.
+        'access_request': os.getenv('ACCESS_REQUEST_RATE_LIMIT', '5/hour'),
+    },
 }
 
 # JWT Settings
@@ -337,3 +404,103 @@ LOGGING = {
 # Create logs directory if it doesn't exist
 LOGS_DIR = BASE_DIR / 'logs'
 LOGS_DIR.mkdir(exist_ok=True)
+
+
+# ============================================================================
+# Health Intelligence Engine (kapabilitas tambahan — §21, §22)
+#
+# Semua setting di bawah OPSIONAL dan punya default aman. Healthify tetap
+# berjalan persis seperti sebelumnya bila tidak satu pun diisi.
+# ============================================================================
+
+# Verifikasi DOI/URL sebelum dipublikasikan sebagai sumber.
+# Matikan HANYA untuk pengujian offline: mematikannya berarti link tidak dicek.
+EVIDENCE_LINK_CHECK_ENABLED = os.getenv('EVIDENCE_LINK_CHECK_ENABLED', 'True') == 'True'
+
+# Bobot skor kualitas evidence (§15). Kosong = pakai default modul.
+_evidence_weights = os.getenv('EVIDENCE_SCORE_WEIGHTS', '')
+EVIDENCE_SCORE_WEIGHTS = {}
+if _evidence_weights:
+    import json as _json
+    try:
+        EVIDENCE_SCORE_WEIGHTS = _json.loads(_evidence_weights)
+    except ValueError:
+        EVIDENCE_SCORE_WEIGHTS = {}
+
+# API key untuk consumer eksternal (HealthTalk dsb).
+# Format env: "key1:healthtalk,key2:partner-lain"
+# Bila kosong, endpoint /api/v1/intelligence/* terbuka (mode pengembangan).
+# Format: "key:consumer" atau "key:consumer:batas" (mis. "k1:healthtalk:300/min").
+# Batas per key berguna karena satu consumer backend melayani banyak pengguna
+# sekaligus, sementara consumer lain mungkin hanya butuh sedikit.
+INTELLIGENCE_API_KEYS = {}
+INTELLIGENCE_KEY_RATES = {}
+_raw_api_keys = os.getenv('INTELLIGENCE_API_KEYS', '').strip()
+if _raw_api_keys:
+    for _pair in _raw_api_keys.split(','):
+        _parts = [_p.strip() for _p in _pair.split(':')]
+        if len(_parts) >= 2 and _parts[0] and _parts[1]:
+            INTELLIGENCE_API_KEYS[_parts[0]] = _parts[1]
+            if len(_parts) >= 3 and _parts[2]:
+                INTELLIGENCE_KEY_RATES[_parts[0]] = _parts[2]
+
+# Izinkan mematikan pemanggilan LLM (engine tetap jalan dengan mode ekstraktif).
+INTELLIGENCE_LLM_ENABLED = os.getenv('INTELLIGENCE_LLM_ENABLED', '1')
+
+# Provider & model LLM.
+# Memakai variabel yang SUDAH menjadi konvensi repo ini (dibaca juga oleh
+# training/scripts/prompt_and_verify.py) — bukan variabel baru.
+#   LLM_PROVIDER : "openai" | "gemini" | "groq" | ... (dipisah koma, EKSKLUSIF).
+#                  Kosong = pakai semua provider berkredensial dengan fallback.
+#   LLM_MODEL    : nama model. Kosong = default engine (gpt-5.4-mini).
+LLM_PROVIDER = os.getenv('LLM_PROVIDER', '')
+LLM_MODEL = os.getenv('LLM_MODEL', '')
+
+# Embedding teks (retrieval semantik & embed jurnal admin).
+# Set 0 untuk mematikan pemanggilan API embedding — retrieval tetap jalan
+# memakai pencocokan leksikal bilingual.
+EMBEDDINGS_ENABLED = os.getenv('EMBEDDINGS_ENABLED', '1')
+
+# Model embedding OpenAI. `text-embedding-3-small` mendukung parameter
+# `dimensions`, sehingga keluarannya bisa dipotong agar cocok dengan kolom
+# vektor yang sudah ada tanpa migrasi tabel.
+EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
+
+# Dimensi vektor. Kosongkan agar dideteksi otomatis dari tabel embeddings
+# (pipeline training memakai 768).
+EMBEDDING_DIMENSIONS = os.getenv('EMBEDDING_DIMENSIONS', '')
+
+# Cache: dipakai untuk hitungan rate limit, kunci idempotensi, hasil validasi
+# DOI/URL, dan terjemahan.
+#
+# Default DATABASE, bukan LocMemCache. LocMemCache hidup di memori tiap proses,
+# sedangkan produksi menjalankan beberapa worker gunicorn — akibatnya setiap
+# worker punya hitungan rate limit sendiri (batas 60/menit efektif menjadi
+# 60 x jumlah worker) dan kunci idempotensi tidak terlihat oleh worker lain.
+# Cache berbasis database dibagi seluruh worker tanpa menambah infrastruktur.
+#
+# Tabelnya dibuat oleh `manage.py createcachetable` (dijalankan saat start).
+CACHES = {
+    'default': {
+        'BACKEND': os.getenv(
+            'CACHE_BACKEND', 'django.core.cache.backends.db.DatabaseCache'
+        ),
+        'LOCATION': os.getenv('CACHE_LOCATION', 'healthify_cache'),
+        'TIMEOUT': 300,
+        'OPTIONS': {'MAX_ENTRIES': 20000, 'CULL_FREQUENCY': 4},
+    }
+}
+
+# Berapa lama respons disimpan untuk kunci idempotensi (detik).
+# Ke mana calon consumer mengirim permintaan akses API. Ditampilkan di
+# dokumentasi bila diisi; dibiarkan kosong berarti dokumentasi tidak menyebut
+# alamat apa pun (lebih baik daripada alamat karangan).
+API_CONTACT_EMAIL = os.getenv('API_CONTACT_EMAIL', '').strip()
+API_CONTACT_URL = os.getenv('API_CONTACT_URL', '').strip()
+
+IDEMPOTENCY_TTL = int(os.getenv('IDEMPOTENCY_TTL', str(60 * 60 * 24)))
+
+# Header yang dipakai consumer eksternal.
+for _header in ('x-api-key', 'x-consumer', 'x-request-id', 'x-idempotency-key'):
+    if _header not in CORS_ALLOW_HEADERS:
+        CORS_ALLOW_HEADERS.append(_header)

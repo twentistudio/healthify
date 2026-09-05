@@ -35,7 +35,7 @@ from .text_normalization import (
     normalize_claim_text
 )
 from . import text_normalization as text_norm
-from .ai_adapter import call_ai_verify
+from .ai_adapter import VERIFICATION_LOGIC_VERSION, call_ai_verify
 from .email_service import email_service
 
 logger = logging.getLogger(__name__)
@@ -155,13 +155,23 @@ def check_cached_result(claim_text: str):
             logger.info("[CACHE MISS] Claim tidak ditemukan di cache.")
             return False, None, None
 
-        # 1) Prioritaskan klaim yang punya VerificationResult dan label BUKAN 'unverified',
-        # diurutkan dari verification_result.updated_at paling baru.
+        # Hanya hasil dari versi logika saat ini yang boleh disajikan. Hasil
+        # lama dianggap CACHE MISS agar diverifikasi ulang oleh mesin terkini.
         prioritized_claims = list(
             claims_qs
-            .filter(verification_result__isnull=False)
+            .filter(verification_result__isnull=False,
+                    verification_result__logic_version=VERIFICATION_LOGIC_VERSION)
             .order_by('-verification_result__updated_at', '-updated_at')
         )
+
+        stale = claims_qs.filter(verification_result__isnull=False).exclude(
+            verification_result__logic_version=VERIFICATION_LOGIC_VERSION
+        ).count()
+        if stale:
+            logger.info(
+                "[CACHE] %d hasil lama (versi != %s) diabaikan; klaim akan diverifikasi ulang.",
+                stale, VERIFICATION_LOGIC_VERSION,
+            )
 
         for claim in prioritized_claims:
             vr = getattr(claim, 'verification_result', None)
@@ -252,7 +262,7 @@ def translate_with_cache(text: str, target_lang: str, cache_prefix: str = "trans
     if cached:
         return cached
 
-    translated = translate_text_gemini(text, target_lang)
+    translated = translate_text(text, target_lang)
 
     # Simpan di cache, misal 24 jam (86400 detik)
     try:
@@ -338,6 +348,57 @@ def translate_label(label: str, target_lang: str) -> str:
     
     return mapping.get(label_lower, label.upper())
 
+def translate_text(text: str, target_lang: str) -> str:
+    """Terjemahkan lewat penyedia LLM yang benar-benar tersedia.
+
+    Urutan: Gemini (bila dikonfigurasi) -> rantai provider LLM (OpenAI dsb)
+    -> teks asli.
+
+    Sebelumnya terjemahan hanya lewat Gemini; tanpa kunci Gemini fitur ini
+    diam-diam mengembalikan teks asli sehingga tombol ganti bahasa di frontend
+    tampak tidak berfungsi.
+    """
+    if not text or len(text) < 10:
+        return text
+
+    from .intelligence.reasoning import llm
+
+    # Gemini hanya dicoba bila memang termasuk provider aktif. Tanpa penjagaan
+    # ini, deployment yang sudah full OpenAI tetap membayar satu round-trip
+    # gagal ke Gemini pada setiap permintaan terjemahan.
+    if llm.PROVIDER_GEMINI in llm.configured_providers() and get_gemini_client() is not None:
+        translated = translate_text_gemini(text, target_lang)
+        if translated and translated.strip() != text.strip():
+            return translated
+
+    return translate_text_llm(text, target_lang) or text
+
+
+def translate_text_llm(text: str, target_lang: str) -> str:
+    """Terjemahan memakai rantai provider LLM (OpenAI, dsb)."""
+    from .intelligence.reasoning import llm
+
+    lang_name = "English" if target_lang == 'en' else "Indonesian"
+    prompt = f"""You are a professional medical translator.
+Translate the following medical/health text into {lang_name}.
+
+Requirements:
+- Output **only** the translated text in {lang_name}.
+- Do not add explanations, notes, alternative phrasings, or quotes.
+- Keep the style and length similar to the original.
+- Preserve medical terminology accuracy.
+
+Text to translate:
+{text}
+"""
+    try:
+        result = llm.generate(prompt, temperature=0.0, max_tokens=1000)
+    except Exception as e:
+        logger.error(f"[TRANSLATE_LLM] Error: {e}")
+        return ""
+    return (result or "").strip()
+
+
 def translate_text_gemini(text: str, target_lang: str) -> str:
     """Translate text menggunakan Gemini API (output hanya teks terjemahan).
     Returns original text if Gemini not available."""
@@ -421,7 +482,9 @@ class ClaimVerifyView(APIView):
             return Response(data, status=status.HTTP_200_OK)
 
         try:
-            claim = self._create_new_claim(claim_text)
+            # Klaim yang sama pernah diverifikasi oleh mesin versi lama:
+            # perbarui baris yang ada, jangan menumpuk duplikat teks yang sama.
+            claim = self._find_stale_claim(claim_text) or self._create_new_claim(claim_text)
             self._process_verification(claim)
 
             claim.status = Claim.STATUS_DONE
@@ -434,6 +497,45 @@ class ClaimVerifyView(APIView):
         except Exception as e:
             logger.error(f"[VERIFY] Verification failed: {e}", exc_info=True)
             return self._handle_verification_error(e, claim_text, request)
+
+    # Helper: tangani kegagalan verifikasi
+    def _handle_verification_error(self, exc: Exception, claim_text: str, request):
+        """
+        Kembalikan response error yang konsisten saat verifikasi gagal.
+
+        Sebelumnya method ini dirujuk di `post()` tetapi tidak pernah
+        didefinisikan, sehingga setiap kegagalan AI berubah menjadi
+        AttributeError (HTTP 500 tanpa pesan yang berguna).
+        """
+        logger.error(
+            f"[VERIFY] Gagal memverifikasi klaim '{claim_text[:80]}': {exc}",
+            exc_info=True,
+        )
+        return Response(
+            {
+                'error': 'Verification failed',
+                'detail': 'Sistem tidak dapat menyelesaikan verifikasi klaim saat ini. Silakan coba lagi.',
+                'claim_text': claim_text,
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    def _find_stale_claim(self, claim_text: str):
+        """Klaim dengan teks sama yang hasilnya dibuat mesin versi lama."""
+        normalized = text_norm.normalize_claim_text(claim_text)
+        claim = (
+            Claim.objects
+            .filter(text_normalized=normalized, verification_result__isnull=False)
+            .exclude(verification_result__logic_version=VERIFICATION_LOGIC_VERSION)
+            .order_by("-updated_at")
+            .first()
+        )
+        if claim:
+            logger.info(
+                "[VERIFY] Memverifikasi ulang klaim %s (hasil lama versi %s)",
+                claim.id, claim.verification_result.logic_version,
+            )
+        return claim
 
     # Helper: create new Claim
     def _create_new_claim(self, claim_text: str) -> Claim:
@@ -474,13 +576,20 @@ class ClaimVerifyView(APIView):
             )
             label = "unverified"
 
-        verification = VerificationResult.objects.create(
+        verification, created = VerificationResult.objects.update_or_create(
             claim=claim,
-            label=label,
-            summary=summary,
-            confidence=confidence,
-            logic_version="v2.0",
+            defaults={
+                "label": label,
+                "summary": summary,
+                "confidence": confidence,
+                "logic_version": VERIFICATION_LOGIC_VERSION,
+            },
         )
+
+        # Sumber lama berasal dari mesin versi sebelumnya dan tidak boleh
+        # bercampur dengan hasil baru.
+        if not created:
+            ClaimSource.objects.filter(claim=claim).delete()
 
         logger.info(
             f"[VERIFY] Created VerificationResult ID: {verification.id} - "
@@ -1192,39 +1301,45 @@ class AdminJournalEmbedView(APIView):
 
 
 def embed_journal_article(journal: JournalArticle):
-    """Embed single journal article to vector database."""
-    from training.scripts.chunk_and_embed import embed_texts_gemini
-    from training.scripts.ingest_chunks_to_pg import connect_db, DB_TABLE
-    
+    """Embed single journal article to vector database.
+
+    Embedding dihasilkan lewat penyedia yang tersedia (OpenAI / Gemini /
+    sentence-transformers) dengan dimensi yang cocok dengan kolom vektor yang
+    sudah ada, sehingga tidak perlu migrasi tabel maupun re-embed korpus lama.
+
+    Penyimpanan ke pgvector bersifat best-effort: tabel dan ekstensinya dibuat
+    otomatis bila belum ada, dan kegagalannya tidak membatalkan embedding yang
+    sudah tersimpan di kolom `JournalArticle.embedding` — retrieval tetap jalan
+    dari sana maupun secara leksikal.
+    """
+    from .intelligence.retrieval.embeddings import embed_text, store_vector
+
     text = f"{journal.title}\n\n{journal.abstract}"
-    embedding = embed_texts_gemini([text])[0]
-    
-    # Save embedding to journal
+    embedding = embed_text(text)
+    if not embedding:
+        raise RuntimeError(
+            "Tidak ada penyedia embedding yang tersedia. Set OPENAI_API_KEY "
+            "(atau GEMINI_API_KEY), lalu ulangi."
+        )
+
     journal.embedding = json.dumps(embedding)
     journal.is_embedded = True
-    journal.save()
-    
-    # Also insert to embeddings table for RAG
-    conn = connect_db()
-    try:
-        with conn.cursor() as cur:
-            emb_str = "[" + ",".join(str(float(x)) for x in embedding) + "]"
-            cur.execute(f"""
-                INSERT INTO {DB_TABLE} (doc_id, safe_id, source_file, chunk_index, n_words, text, doi, embedding)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector)
-            """, (
-                f"journal_{journal.id}",
-                journal.doi or f"journal_{journal.id}",
-                f"admin_import_{journal.source_portal}",
-                0,
-                len(text.split()),
-                text,
-                journal.doi or "",
-                emb_str
-            ))
-        conn.commit()
-    finally:
-        conn.close()
+    journal.save(update_fields=["embedding", "is_embedded", "updated_at"])
+
+    stored = store_vector(
+        doc_id=f"journal_{journal.id}",
+        safe_id=journal.doi or f"journal_{journal.id}",
+        source_file=f"admin_import_{journal.source_portal}",
+        text=text,
+        doi=journal.doi or "",
+        embedding=embedding,
+    )
+    if not stored:
+        logger.info(
+            "[EMBED] Jurnal %s ter-embed di database Django; indeks pgvector dilewati.",
+            journal.id,
+        )
+    return journal
 
 
 class AdminJournalDetailView(APIView):

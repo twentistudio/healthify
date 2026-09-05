@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Calendar, Info } from 'react-feather';
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api.healthify.cloud/api' || 'http://localhost:8000/api';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 const AdminClaimDetail = () => {
     const navigate = useNavigate();

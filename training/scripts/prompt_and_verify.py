@@ -102,13 +102,25 @@ if gemini_client is None:
             print(f"[INFO] Will use fallback methods", file=sys.stderr)
 
 # LLM Provider Configuration (Groq / DeepSeek / OpenRouter)
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()  
-LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
+# LLM_PROVIDER kini juga dipakai backend (api/intelligence/reasoning/llm.py).
+# Nilai "openai" harus dikenali di sini agar satu variabel berlaku konsisten
+# untuk backend maupun pipeline training.
+LLM_API_KEY = (
+    os.getenv("LLM_API_KEY")
+    or os.getenv("GROQ_API_KEY")
+    or os.getenv("DEEPSEEK_API_KEY")
+    or (os.getenv("OPENAI_API_KEY") if LLM_PROVIDER.startswith("openai") else None)
+)
 LLM_BASE_URL = os.getenv("LLM_BASE_URL")
 LLM_MODEL = os.getenv("LLM_MODEL")
 
 # Default settings per provider
 PROVIDER_DEFAULTS = {
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-5.4-mini"
+    },
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
         "model": "llama-3.1-8b-instant"  
@@ -139,10 +151,14 @@ if not LLM_API_KEY:
     sys.exit(2)
 
 # Apply defaults if not specified
+# Backend memperbolehkan LLM_PROVIDER berisi daftar ("openai,gemini");
+# di sini hanya provider pertama yang relevan.
+_primary_provider = LLM_PROVIDER.split(",")[0].strip() or "groq"
+
 if not LLM_BASE_URL:
-    LLM_BASE_URL = PROVIDER_DEFAULTS.get(LLM_PROVIDER, {}).get("base_url", "https://api.groq.com/openai/v1")
+    LLM_BASE_URL = PROVIDER_DEFAULTS.get(_primary_provider, {}).get("base_url", "https://api.groq.com/openai/v1")
 if not LLM_MODEL:
-    LLM_MODEL = PROVIDER_DEFAULTS.get(LLM_PROVIDER, {}).get("model", "llama-3.1-8b-instant")
+    LLM_MODEL = PROVIDER_DEFAULTS.get(_primary_provider, {}).get("model", "llama-3.1-8b-instant")
 
 try:
     llm_client = OpenAI(
