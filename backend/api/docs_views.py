@@ -62,8 +62,8 @@ def api_reference(request):
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Healthify API Reference</title>
-  <meta name="description" content="Healthify Intelligence API: health information grounded in peer reviewed journal literature." />
+  <title>ragai API Reference</title>
+  <meta name="description" content="ragai Health Intelligence API: health answers grounded in peer reviewed journal literature, with the papers attached." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🩺</text></svg>" />
   <style>
     body {{ margin: 0; }}
@@ -72,15 +72,24 @@ def api_reference(request):
        bukan di dalam spesifikasi, karena OpenAPI mendeskripsikan API dan bukan
        antarmuka. Scalar merender isi halaman sendiri, jadi elemen ini dijaga
        tetap di atasnya dengan z-index. */
+    .req-home {{
+      position: fixed; left: 18px; bottom: 20px; z-index: 60;
+      font: 600 20px/1 Georgia, "Times New Roman", serif; letter-spacing: -.02em;
+      text-decoration: none; color: #14181a; background: rgba(255, 255, 255, .92);
+      padding: 9px 14px; border-radius: 999px; border: 1px solid #e3e6e2;
+    }}
+    .req-home span {{ color: #10574a; }}
+    .req-home:hover {{ border-color: #10574a; }}
+
     .req-open {{
       position: fixed; right: 20px; bottom: 20px; z-index: 60;
       padding: 12px 20px; border: 0; border-radius: 999px;
-      background: #6b21a8; color: #fff; cursor: pointer;
+      background: #10574a; color: #fff; cursor: pointer;
       font: 600 14px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
-      box-shadow: 0 6px 20px rgba(76, 29, 149, .35);
+      box-shadow: 0 6px 20px rgba(16, 87, 74, .32);
     }}
-    .req-open:hover {{ background: #581c87; }}
-    .req-open:focus-visible {{ outline: 3px solid #c4b5fd; outline-offset: 2px; }}
+    .req-open:hover {{ background: #0c463b; }}
+    .req-open:focus-visible {{ outline: 3px solid #8fd3bb; outline-offset: 2px; }}
 
     .req-backdrop {{
       position: fixed; inset: 0; z-index: 70; display: none;
@@ -95,7 +104,7 @@ def api_reference(request):
       font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
       box-shadow: 0 24px 60px rgba(0, 0, 0, .3);
     }}
-    .req-card h2 {{ margin: 0 0 6px; font-size: 20px; color: #4c1d95; }}
+    .req-card h2 {{ margin: 0 0 6px; font-size: 20px; color: #0c463b; }}
     .req-card p.req-lead {{ margin: 0 0 18px; color: #6b7280; }}
     .req-card label {{ display: block; margin: 14px 0 5px; font-weight: 600; }}
     .req-card .req-optional {{ font-weight: 400; color: #9ca3af; }}
@@ -104,7 +113,7 @@ def api_reference(request):
       border: 1px solid #d1d5db; border-radius: 8px; font: inherit; color: inherit;
     }}
     .req-card input:focus, .req-card textarea:focus {{
-      outline: none; border-color: #7c3aed; box-shadow: 0 0 0 3px rgba(124, 58, 237, .18);
+      outline: none; border-color: #10574a; box-shadow: 0 0 0 3px rgba(16, 87, 74, .18);
     }}
     .req-card textarea {{ min-height: 96px; resize: vertical; }}
     .req-actions {{ display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }}
@@ -112,7 +121,7 @@ def api_reference(request):
       padding: 10px 18px; border-radius: 8px; font: 600 14px/1.2 inherit; cursor: pointer;
     }}
     .req-cancel {{ background: #fff; color: #4b5563; border: 1px solid #d1d5db; }}
-    .req-submit {{ background: #6b21a8; color: #fff; border: 0; }}
+    .req-submit {{ background: #10574a; color: #fff; border: 0; }}
     .req-submit[disabled] {{ opacity: .6; cursor: progress; }}
     .req-note {{ margin-top: 16px; padding: 12px 14px; border-radius: 8px; display: none; }}
     .req-note[data-kind="ok"] {{ display: block; background: #ecfdf5; color: #065f46; }}
@@ -120,7 +129,7 @@ def api_reference(request):
 
     @media (prefers-color-scheme: dark) {{
       .req-card {{ background: #1f2937; color: #e5e7eb; }}
-      .req-card h2 {{ color: #c4b5fd; }}
+      .req-card h2 {{ color: #8fd3bb; }}
       .req-card p.req-lead {{ color: #9ca3af; }}
       .req-card input, .req-card textarea {{
         background: #111827; border-color: #374151; color: #e5e7eb;
@@ -136,20 +145,22 @@ def api_reference(request):
   <script id="api-reference" data-url="{spec_url}"></script>
   <script>
     var configuration = {{
-      theme: 'purple',
+      theme: 'default',
       layout: 'modern',
       darkMode: false,
       hideDownloadButton: false,
       searchHotKey: 'k',
       metaData: {{
-        title: 'Healthify API Reference',
-        description: 'Health information grounded in peer reviewed journal literature.'
+        title: 'ragai API Reference',
+        description: 'Health answers grounded in peer reviewed journal literature.'
       }},
       defaultHttpClient: {{ targetKey: 'shell', clientKey: 'curl' }}
     }};
     document.getElementById('api-reference').dataset.configuration = JSON.stringify(configuration);
   </script>
   <script src="{SCALAR_CDN}"></script>
+
+  <a class="req-home" href="/">rag<span>ai</span></a>
 
   <button class="req-open" type="button" data-req-open>Request API access</button>
 

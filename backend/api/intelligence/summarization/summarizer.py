@@ -10,6 +10,8 @@ dalam percakapan atau berasal dari evidence. Field yang tidak diketahui tetap
 """
 
 import json
+
+from ..context.conversation import public_conversation_id
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -171,7 +173,7 @@ def build_summary(session,
         ))
 
     summary: Dict[str, Any] = {
-        "session_id": session.session_id,
+        "session_id": public_conversation_id(session),
         "consumer": session.consumer,
         "status": PRELIMINARY_ASSESSMENT_STATUS,
         "is_diagnosis": False,

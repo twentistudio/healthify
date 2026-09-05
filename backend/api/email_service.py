@@ -499,6 +499,84 @@ Terima kasih telah berkontribusi untuk memerangi misinformasi kesehatan.
             html_message=html_message
         )
 
+    # ==============================
+    # ENGINE PUBLIK (ragai)
+    # ==============================
+
+    def _engine_from_header(self) -> str:
+        """
+        Pengirim untuk surat yang berasal dari engine publik.
+
+        Engine dipasarkan dengan nama tersendiri dan alamat tersendiri, jadi
+        pemohon tidak seharusnya menerima surat atas nama produk Healthify.
+        """
+        name = getattr(settings, 'ENGINE_BRAND_NAME', 'ragai')
+        return f"{name} <{self.from_email}>"
+
+    def _send_as_engine(self, subject: str, message: str, recipients: List[str],
+                        html_message: Optional[str] = None) -> bool:
+        if not self.enabled:
+            logger.info("[EMAIL] Notifikasi dimatikan, dilewati: %s", subject)
+            return False
+        if not recipients:
+            logger.warning("[EMAIL] Tidak ada penerima untuk: %s", subject)
+            return False
+        try:
+            email = EmailMultiAlternatives(
+                subject=subject, body=message,
+                from_email=self._engine_from_header(), to=recipients,
+            )
+            if html_message:
+                email.attach_alternative(html_message, "text/html")
+            email.send()
+            logger.info("[EMAIL] Terkirim ke %s: %s", ", ".join(recipients), subject)
+            return True
+        except Exception as exc:
+            logger.error("[EMAIL] Gagal mengirim '%s': %s", subject, exc, exc_info=True)
+            return False
+
+    def notify_admin_access_request(self, access_request) -> bool:
+        """
+        Beri tahu operator bahwa ada permintaan akses API baru.
+
+        Dipanggil dari endpoint publik, jadi kegagalannya tidak boleh menular ke
+        respons: pemohon tetap menerima konfirmasi bahwa permintaannya tercatat,
+        dan barisnya sudah tersimpan di basis data apa pun yang terjadi di sini.
+        """
+        context = {"request_obj": access_request}
+        return self._send_as_engine(
+            subject=f"[ragai] Permintaan akses API dari {access_request.email}",
+            message=render_to_string("emails/access_request_admin.txt", context),
+            recipients=self.admin_emails,
+            html_message=render_to_string("emails/access_request_admin.html", context),
+        )
+
+    def send_api_key(self, recipient: str, api_key: str, name: str = "",
+                     label: str = "", rate: str = "", base_url: str = "") -> bool:
+        """
+        Kirim kunci API kepada pemohon.
+
+        Kunci hanya pernah ada dalam bentuk aslinya di sini dan di terminal
+        operator; yang tersimpan hanya hash-nya. Karena itu kegagalan pengiriman
+        harus terlihat jelas oleh pemanggil, bukan ditelan diam-diam.
+        """
+        context = {
+            "name": name or recipient,
+            "api_key": api_key,
+            "label": label,
+            "rate": rate or getattr(settings, "INTELLIGENCE_RATE_LIMIT_LABEL",
+                                    "60 requests per minute"),
+            "base_url": (base_url
+                         or getattr(settings, "PUBLIC_API_BASE_URL",
+                                    "https://ragai.twenti.studio")).rstrip("/"),
+        }
+        return self._send_as_engine(
+            subject="Your ragai API key",
+            message=render_to_string("emails/api_key_delivery.txt", context),
+            recipients=[recipient],
+            html_message=render_to_string("emails/api_key_delivery.html", context),
+        )
+
 
 # Singleton instance
 email_service = EmailNotificationService()

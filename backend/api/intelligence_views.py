@@ -317,9 +317,12 @@ class ConsultationSummaryView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from .models import ConversationSession
+        from .intelligence.context.conversation import find_session
 
-        session = ConversationSession.objects.filter(session_id=session_id).first()
+        # Sesi dicari lewat pembantu bersama, sehingga endpoint ini tidak perlu
+        # tahu bagaimana pengenal ruang obrolan dipetakan ke baris, dan satu
+        # consumer tidak bisa membaca ruang obrolan milik consumer lain.
+        session = find_session(session_id, consumer)
         if not session:
             return Response(
                 {"error": "not_found", "detail": f"Sesi '{session_id}' tidak ditemukan."},
@@ -339,6 +342,8 @@ class ConsultationSummaryView(APIView):
             persist_summary(session, summary)
 
         if payload.get("close_session"):
+            from .models import ConversationSession
+
             session.status = ConversationSession.STATUS_CLOSED
             session.save(update_fields=["status", "updated_at"])
             summary["session_status"] = session.status
@@ -360,9 +365,12 @@ class ConversationSessionView(APIView):
         if error:
             return error
 
-        from .models import ConversationSession
+        from .intelligence.context.conversation import find_session
 
-        session = ConversationSession.objects.filter(session_id=session_id).first()
+        # Sesi dicari lewat pembantu bersama, sehingga endpoint ini tidak perlu
+        # tahu bagaimana pengenal ruang obrolan dipetakan ke baris, dan satu
+        # consumer tidak bisa membaca ruang obrolan milik consumer lain.
+        session = find_session(session_id, consumer)
         if not session:
             return Response(
                 {"error": "not_found", "detail": f"Sesi '{session_id}' tidak ditemukan."},
@@ -403,9 +411,12 @@ class ConversationSessionView(APIView):
         if error:
             return error
 
-        from .models import ConversationSession
+        from .intelligence.context.conversation import find_session
 
-        session = ConversationSession.objects.filter(session_id=session_id).first()
+        # Sesi dicari lewat pembantu bersama, sehingga endpoint ini tidak perlu
+        # tahu bagaimana pengenal ruang obrolan dipetakan ke baris, dan satu
+        # consumer tidak bisa membaca ruang obrolan milik consumer lain.
+        session = find_session(session_id, consumer)
         if not session:
             return Response(
                 {"error": "not_found", "detail": f"Sesi '{session_id}' tidak ditemukan."},
@@ -534,6 +545,16 @@ class AccessRequestView(APIView):
             expected_volume=field("expected_volume"),
         )
         logger.info("[ACCESS] permintaan akses baru #%s dari %s", access_request.id, email)
+
+        # Pemberitahuan ke operator. Kegagalan di sini tidak boleh menular ke
+        # respons: permintaannya sudah tersimpan, dan pemohon berhak menerima
+        # konfirmasi itu apa pun yang terjadi dengan surelnya.
+        try:
+            from .email_service import email_service
+
+            email_service.notify_admin_access_request(access_request)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[ACCESS] pemberitahuan operator gagal: %s", exc)
 
         return Response(
             {

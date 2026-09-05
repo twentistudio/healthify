@@ -25,17 +25,38 @@ MAX_HISTORY_TURNS = 20
 MAX_CONTEXT_MESSAGES = 8
 
 
+def storage_key(consumer: str, conversation_id: str) -> str:
+    """
+    Kunci penyimpanan sesi, dipisah per consumer.
+
+    Pengenal ruang obrolan dibuat oleh produk lain, dan dua produk bisa
+    sama-sama memakai "room-1" tanpa saling tahu. Tanpa pemisahan ini percakapan
+    milik satu produk akan terbaca oleh produk lain — kebocoran yang tidak
+    kentara justru karena tampak "berfungsi".
+
+    Yang dikembalikan ke consumer tetap pengenal aslinya; awalan ini hanya
+    hidup di dalam basis data.
+    """
+    consumer = (consumer or "healthify").strip() or "healthify"
+    return f"{consumer}:{conversation_id}"
+
+
 class ConversationState:
     """Kumpulan riwayat + health context untuk satu percakapan."""
 
     def __init__(self, conversation_id: Optional[str] = None,
                  messages: Optional[List[Dict[str, str]]] = None,
                  health_context: Optional[HealthContext] = None,
-                 session=None):
+                 session=None, has_snapshot: bool = False):
         self.conversation_id = conversation_id
         self.messages: List[Dict[str, str]] = list(messages or [])
         self.health_context: HealthContext = health_context or HealthContext()
         self.session = session  # ConversationSession | None
+        # Apakah sesi ini punya snapshot konteks tersimpan. Dibedakan dari
+        # "konteks kosong": snapshot yang memang kosong terjadi setelah
+        # pembahasan berpindah penyakit, dan membangunnya ulang dari riwayat
+        # akan mengembalikan topik yang baru saja ditinggalkan.
+        self.has_snapshot = has_snapshot
 
     @property
     def is_new(self) -> bool:
@@ -58,6 +79,43 @@ class ConversationState:
         }
 
 
+def public_conversation_id(session) -> str:
+    """
+    Pengenal ruang obrolan sebagaimana consumer mengenalnya.
+
+    Awalan consumer adalah urusan internal penyimpanan. Membocorkannya ke
+    payload membuat consumer menerima pengenal yang berbeda dari yang mereka
+    kirim, dan kalau dipakai kembali akan menunjuk sesi yang salah.
+    """
+    raw = getattr(session, "session_id", "") or ""
+    prefix = f"{getattr(session, 'consumer', '') or ''}:"
+    return raw[len(prefix):] if prefix != ":" and raw.startswith(prefix) else raw
+
+
+def find_session(conversation_id: str, consumer: str = "healthify"):
+    """
+    Temukan sesi milik satu consumer.
+
+    Satu-satunya tempat yang tahu bagaimana pengenal ruang obrolan dipetakan
+    ke baris di basis data. Semua pemanggil memakai ini, sehingga penamaan
+    kunci tidak pernah tersebar dan tidak bisa berbeda-beda antar endpoint.
+    """
+    if not conversation_id:
+        return None
+    try:
+        from ...models import ConversationSession
+
+        return (
+            ConversationSession.objects.filter(
+                session_id=storage_key(consumer, conversation_id)).first()
+            # Sesi lama tersimpan tanpa awalan consumer.
+            or ConversationSession.objects.filter(session_id=conversation_id).first()
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[CONVERSATION] gagal mencari sesi %s: %s", conversation_id, exc)
+        return None
+
+
 def load_state(conversation_id: Optional[str],
                previous_messages: Optional[List[Dict[str, str]]] = None,
                health_context_payload: Optional[Dict] = None,
@@ -73,12 +131,12 @@ def load_state(conversation_id: Optional[str],
     """
     stored_messages: List[Dict[str, str]] = []
     stored_context = HealthContext()
+    has_snapshot = False
     session = None
 
     if conversation_id:
         try:
-            from ...models import ConversationSession
-            session = ConversationSession.objects.filter(session_id=conversation_id).first()
+            session = find_session(conversation_id, consumer)
             if session:
                 stored_messages = [
                     {"role": m.role, "content": m.content}
@@ -87,6 +145,7 @@ def load_state(conversation_id: Optional[str],
                 if session.health_context:
                     try:
                         stored_context = health_context_from_dict(json.loads(session.health_context))
+                        has_snapshot = True
                     except (ValueError, TypeError) as exc:
                         logger.warning("[CONVERSATION] health_context rusak untuk %s: %s",
                                        conversation_id, exc)
@@ -110,6 +169,7 @@ def load_state(conversation_id: Optional[str],
         messages=messages[-MAX_HISTORY_TURNS * 2:],
         health_context=stored_context,
         session=session,
+        has_snapshot=has_snapshot,
     )
 
 
@@ -178,10 +238,13 @@ def persist_turn(conversation_id: Optional[str],
     try:
         from ...models import ConversationMessage, ConversationSession
 
-        session, _ = ConversationSession.objects.get_or_create(
-            session_id=conversation_id,
-            defaults={"consumer": consumer or "healthify"},
-        )
+        # Sesi dibuat sendiri saat pertama kali dipakai. Konsumen tidak perlu
+        # mendaftarkan ruang obrolan lebih dulu: cukup kirim pengenal miliknya.
+        session = find_session(conversation_id, consumer)
+        if session is None:
+            session = ConversationSession.objects.create(
+                session_id=storage_key(consumer, conversation_id),
+                consumer=consumer or "healthify")
         session.health_context = json.dumps(health_context.to_dict(), ensure_ascii=False)
         session.save(update_fields=["health_context", "updated_at"])
 
@@ -202,7 +265,7 @@ def persist_turn(conversation_id: Optional[str],
                 safety_decision=safety_decision or "",
                 evidence_refs=json.dumps(evidence_refs or [], ensure_ascii=False),
             )
-        return session.session_id
+        return conversation_id
     except Exception as exc:  # pragma: no cover
         logger.warning("[CONVERSATION] gagal menyimpan giliran %s: %s", conversation_id, exc)
         return None

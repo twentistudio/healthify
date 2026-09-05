@@ -12,14 +12,11 @@ HealthTalk hanya melihat bentuk di bawah ini; ia tidak perlu tahu apa pun
 tentang implementasi internal Healthify.
 """
 
-import re
 from typing import Any, Dict
 
 from ..contracts import IntelligenceResponse
 
-# Penanda sitasi internal ("[E1]") berguna untuk penelusuran di bentuk `full`,
-# tetapi hanya menjadi derau pada teks yang langsung ditampilkan ke pengguna.
-_CITATION_MARKER_RE = re.compile(r"\s*\[E\d{1,2}\]")
+from ..citations import strip_citation_markers
 
 
 def to_consumer_response(response: IntelligenceResponse,
@@ -27,7 +24,12 @@ def to_consumer_response(response: IntelligenceResponse,
                          include_sources: bool = True) -> Dict[str, Any]:
     """Bentuk response publik untuk endpoint /api/v1/intelligence/query."""
     data: Dict[str, Any] = {
-        "answer": response.answer,
+        # Teks siap tampil, tanpa penanda sitasi. Penanda itu notasi internal;
+        # di layar ia hanya muncul sebagai angka dalam kurung yang tidak berarti
+        # bagi pembaca. Yang membutuhkan pemetaan kalimat ke bukti memakai
+        # `answer_annotated` di bawah.
+        "answer": strip_citation_markers(response.answer),
+        "answer_annotated": response.answer,
         "intent": response.intent.value,
         "mode": response.mode.value,
         "conversation_id": response.conversation_id,
@@ -76,6 +78,11 @@ def to_simple_response(response: IntelligenceResponse) -> Dict[str, Any]:
                         (mis. keluhan menandakan kondisi gawat darurat)
         conversation_id kirim balik pada permintaan berikutnya agar konteks
                         percakapan tersambung
+        sources_reused  True berarti giliran ini memakai jurnal yang sama
+                        dengan giliran sebelumnya di ruang obrolan ini, bukan
+                        hasil pencarian baru. Berguna bagi consumer yang ingin
+                        menampilkan daftar rujukan sekali saja per pembahasan
+                        alih-alih mengulangnya di setiap gelembung pesan.
         request_id      untuk pelaporan masalah
     """
     critical = [
@@ -84,9 +91,7 @@ def to_simple_response(response: IntelligenceResponse) -> Dict[str, Any]:
     ]
     notice = critical[0].message if critical else None
 
-    answer = _CITATION_MARKER_RE.sub("", response.answer or "")
-    answer = re.sub(r"\s+([.,;])", r"\1", answer)
-    answer = re.sub(r"[ \t]{2,}", " ", answer).strip()
+    answer = strip_citation_markers(response.answer)
 
     return {
         "answer": answer,
@@ -105,5 +110,6 @@ def to_simple_response(response: IntelligenceResponse) -> Dict[str, Any]:
         "has_evidence": bool(response.evidence),
         "notice": notice,
         "conversation_id": response.conversation_id,
+        "sources_reused": (response.metadata or {}).get("evidence_source") == "conversation",
         "request_id": (response.metadata or {}).get("request_id"),
     }

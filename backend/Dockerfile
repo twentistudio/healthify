@@ -47,11 +47,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
 # Start command - NO makemigrations in production!
 CMD python manage.py migrate --noinput && \
     python manage.py createcachetable && \
-    gunicorn backend_project.wsgi:application \
-    --bind 0.0.0.0:${PORT} \
-    --workers 2 \
-    --timeout 180 \
-    --log-level info \
-    --access-logfile - \
-    --error-logfile - \
-    --capture-output
+    gunicorn backend_project.wsgi:application -c gunicorn_conf.py

@@ -1,0 +1,18 @@
+New API access request
+
+Name        : {{ request_obj.name }}
+Email       : {{ request_obj.email }}
+Organization: {{ request_obj.organization|default:"not stated" }}
+Volume      : {{ request_obj.expected_volume|default:"not stated" }}
+Received    : {{ request_obj.created_at|date:"d M Y H:i" }}
+Request ID  : {{ request_obj.id }}
+
+Intended use
+------------
+{{ request_obj.use_case }}
+
+To approve, issue a key and email it to the requester:
+
+    python manage.py issue_api_key --consumer <name> --request {{ request_obj.id }} --email
+
+Nothing is granted until you run that command.

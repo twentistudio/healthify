@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ragai — health answers with the papers attached</title>
+  <meta name="description" content="A health question answering engine grounded in peer reviewed journal literature. Every answer carries the papers it came from, and says so when the evidence is not there." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.92em%22 font-size=%2288%22>◆</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --paper:   #fcfcfa;
+      --raised:  #ffffff;
+      --ink:     #14181a;
+      --muted:   #5f6b68;
+      --line:    #e3e6e2;
+      --accent:  #10574a;
+      --accent-soft: #e8f0ed;
+      --code-bg: #12181a;
+      --code-fg: #dfe7e4;
+      --serif: "Newsreader", Georgia, "Times New Roman", serif;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --paper:  #0f1214;
+        --raised: #161a1d;
+        --ink:    #e8ecea;
+        --muted:  #96a29e;
+        --line:   #262d30;
+        --accent: #6fd0b6;
+        --accent-soft: #16302a;
+        --code-bg: #090c0d;
+        --code-fg: #d6e0dd;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 16px/1.65 var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); }
+
+    .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+
+    /* ---- masthead ---- */
+    header {
+      border-bottom: 1px solid var(--line);
+      position: sticky; top: 0; z-index: 20;
+      background: color-mix(in srgb, var(--paper) 88%, transparent);
+      backdrop-filter: blur(8px);
+    }
+    .bar {
+      display: flex; align-items: baseline; gap: 14px;
+      padding: 18px 0;
+    }
+    .logotype {
+      font-family: var(--serif);
+      font-size: 25px; font-weight: 600; letter-spacing: -.02em;
+      text-decoration: none; color: var(--ink);
+    }
+    .logotype span { color: var(--accent); }
+    .tag {
+      font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--accent); border: 1px solid currentColor;
+      padding: 2px 7px; border-radius: 3px; position: relative; top: -2px;
+    }
+    nav { margin-left: auto; display: flex; gap: 22px; align-items: baseline; }
+    nav a { font-size: 14px; text-decoration: none; color: var(--muted); }
+    nav a:hover { color: var(--ink); }
+    nav a.primary { color: var(--accent); font-weight: 600; }
+
+    /* ---- opening ---- */
+    .lede { padding: 72px 0 56px; border-bottom: 1px solid var(--line); }
+    h1 {
+      font-family: var(--serif);
+      font-size: clamp(32px, 5.4vw, 46px);
+      line-height: 1.12; font-weight: 500; letter-spacing: -.015em;
+      margin: 0 0 20px; text-wrap: balance; max-width: 15ch;
+    }
+    .lede p { margin: 0; font-size: 17.5px; line-height: 1.7; color: var(--muted); max-width: 62ch; }
+    .lede p strong { color: var(--ink); font-weight: 600; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+    .btn {
+      font: 600 14.5px/1 var(--sans); text-decoration: none;
+      padding: 12px 20px; border-radius: 6px; border: 1px solid var(--accent);
+      cursor: pointer;
+    }
+    .btn.solid { background: var(--accent); color: var(--paper); }
+    .btn.ghost { background: transparent; color: var(--accent); }
+    .btn:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
+
+    /* ---- sections ---- */
+    section { padding: 52px 0; border-bottom: 1px solid var(--line); }
+    h2 {
+      font-family: var(--serif); font-size: 23px; font-weight: 600;
+      letter-spacing: -.01em; margin: 0 0 16px;
+    }
+    section p { margin: 0 0 16px; max-width: 64ch; color: var(--muted); }
+    section p strong { color: var(--ink); font-weight: 600; }
+
+    .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+    .steps li {
+      counter-increment: step; position: relative;
+      padding: 0 0 22px 44px; max-width: 64ch; color: var(--muted);
+    }
+    .steps li:last-child { padding-bottom: 0; }
+    .steps li::before {
+      content: counter(step);
+      position: absolute; left: 0; top: 1px;
+      width: 26px; height: 26px; border-radius: 50%;
+      background: var(--accent-soft); color: var(--accent);
+      font: 600 12.5px/26px var(--sans); text-align: center;
+    }
+    .steps b { color: var(--ink); font-weight: 600; }
+
+    pre {
+      margin: 0; padding: 18px 20px; border-radius: 8px;
+      background: var(--code-bg); color: var(--code-fg);
+      font: 13px/1.7 var(--mono); overflow-x: auto;
+    }
+    pre .c { color: #7f8f8b; }
+    pre .s { color: #8fd3bb; }
+    .pair { display: grid; gap: 14px; }
+    @media (min-width: 720px) { .pair { grid-template-columns: 1fr 1fr; } }
+    .pair h3 {
+      margin: 0 0 8px; font: 600 11.5px/1 var(--sans);
+      letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+    }
+
+    .note {
+      background: var(--accent-soft); border-radius: 8px;
+      padding: 20px 22px; max-width: 64ch;
+    }
+    .note h2 { margin-bottom: 10px; }
+    .note p { color: var(--ink); opacity: .82; }
+    .note p:last-child { margin-bottom: 0; }
+
+    footer { padding: 34px 0 60px; color: var(--muted); font-size: 13.5px; }
+    footer a { color: var(--muted); }
+
+    /* ---- request dialog ---- */
+    .backdrop {
+      position: fixed; inset: 0; z-index: 60; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(10, 14, 15, .55); padding: 20px;
+    }
+    .backdrop[data-open="true"] { display: flex; }
+    .card {
+      width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto;
+      background: var(--raised); border-radius: 12px; padding: 28px;
+      border: 1px solid var(--line);
+    }
+    .card h2 { margin-bottom: 6px; }
+    .card .sub { font-size: 14px; color: var(--muted); margin: 0 0 18px; }
+    .card label { display: block; margin: 14px 0 5px; font-size: 13.5px; font-weight: 600; }
+    .card label i { font-style: normal; font-weight: 400; color: var(--muted); }
+    .card input, .card textarea {
+      width: 100%; padding: 10px 12px; border-radius: 6px;
+      border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+      font: 14px/1.5 var(--sans);
+    }
+    .card input:focus, .card textarea:focus {
+      outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    .card textarea { min-height: 92px; resize: vertical; }
+    .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
+    .row button { padding: 10px 18px; border-radius: 6px; font: 600 14px/1 var(--sans); cursor: pointer; }
+    .cancel { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    .send { background: var(--accent); color: var(--paper); border: 0; }
+    .send[disabled] { opacity: .6; cursor: progress; }
+    .msg { margin-top: 14px; padding: 11px 14px; border-radius: 6px; font-size: 13.5px; display: none; }
+    .msg[data-kind="ok"] { display: block; background: var(--accent-soft); color: var(--accent); }
+    .msg[data-kind="error"] { display: block; background: #fdecec; color: #a02020; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) .msg[data-kind="error"] { background: #3a1a1a; color: #f4b8b8; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="logotype" href="/">rag<span>ai</span></a>
+    <span class="tag">Beta</span>
+    <nav>
+      <a href="/docs">Documentation</a>
+      <a href="#" class="primary" data-open>Request access</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="lede">
+      <h1>Health answers with the papers attached.</h1>
+      <p>
+        ragai answers health questions from <strong>{{ journal_count }} peer reviewed
+        journal articles</strong>, and returns the papers it used. Every DOI is
+        checked against the registry before it is shown, and every title is taken
+        from the registry rather than from the model. When the literature does not
+        cover a question, the engine says so instead of writing something plausible.
+      </p>
+      <div class="actions">
+        <a class="btn solid" href="#" data-open>Request an API key</a>
+        <a class="btn ghost" href="/docs">Read the documentation</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <section>
+      <h2>What it is for</h2>
+      <p>
+        A single HTTP endpoint that another product's backend can call when a user
+        asks something about health. You send the question, you get an answer in
+        plain language and the journal articles behind it. There is no SDK to
+        install and no model to host.
+      </p>
+      <p>
+        It is built for products that need to show <strong>where an answer came
+        from</strong>: patient education, health chat, triage assistants, editorial
+        fact checking.
+      </p>
+    </section>
+
+    <section>
+      <h2>How an answer is produced</h2>
+      <ol class="steps">
+        <li><b>Retrieve.</b> The question is matched against the journal index in
+          both Indonesian and English, so an Indonesian question still reaches
+          English literature.</li>
+        <li><b>Verify.</b> Every candidate link is resolved against the DOI
+          registry, and titles are replaced with the registered ones. A paper whose
+          title does not match its DOI is dropped rather than shown.</li>
+        <li><b>Answer, or decline.</b> The answer is written only from the selected
+          papers, with citation markers pointing at them. If nothing relevant is
+          found, the response says the evidence is insufficient.</li>
+        <li><b>Fill the gap.</b> When a topic is not represented in the index yet,
+          the engine searches the literature for it, verifies what it finds, and
+          answers from it in the same request.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>One request</h2>
+      <div class="pair">
+        <div>
+          <h3>Request</h3>
+<pre><span class="c"># POST {{ base_url }}/api/v1/intelligence/query</span>
+{
+  <span class="s">"query"</span>: <span class="s">"Is dengue spread by mosquitoes?"</span>,
+  <span class="s">"options"</span>: { <span class="s">"format"</span>: <span class="s">"simple"</span> }
+}</pre>
+        </div>
+        <div>
+          <h3>Response</h3>
+<pre>{
+  <span class="s">"answer"</span>: <span class="s">"Dengue is transmitted by the…"</span>,
+  <span class="s">"sources"</span>: [
+    { <span class="s">"title"</span>: <span class="s">"Dengue Fever: An Overview"</span>,
+      <span class="s">"doi"</span>: <span class="s">"10.5772/intechopen.92315"</span>,
+      <span class="s">"url"</span>: <span class="s">"https://doi.org/…"</span> }
+  ],
+  <span class="s">"has_evidence"</span>: true
+}</pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Conversations stay consistent</h2>
+      <p>
+        Send your own chat room identifier and follow up questions are answered
+        from the same papers as the first one, so the references in a thread do not
+        change from message to message. When the user moves to a different
+        condition, a fresh search runs and the response tells you which of the two
+        happened.
+      </p>
+    </section>
+
+    <section>
+      <div class="note">
+        <h2>Free while in beta</h2>
+        <p>
+          The engine is in beta and access is <strong>free of charge</strong>. Keys
+          are issued by request so that we can keep an eye on load and talk to the
+          people building on it.
+        </p>
+        <p>
+          Beta also means the honest caveats apply: the index is still growing,
+          answers can be shallow on topics with thin literature, and the response
+          shape may gain fields. Breaking changes will be announced to key holders
+          before they ship, and we will give advance notice before pricing changes.
+        </p>
+      </div>
+    </section>
+
+    <section style="border-bottom:0">
+      <h2>Get a key</h2>
+      <p>
+        Tell us what you are building and roughly how much traffic to expect. We
+        read every request and reply by email with a key.
+      </p>
+      <div class="actions">
+        <a class="btn solid" href="#" data-open>Request an API key</a>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    ragai — health intelligence engine ·
+    <a href="/docs">API documentation</a>
+    <p style="margin:10px 0 0;max-width:62ch;">
+      Answers are drawn from published literature for information only. They are
+      not a diagnosis and do not replace consultation with a clinician.
+    </p>
+  </div>
+</footer>
+
+<div class="backdrop" data-backdrop role="dialog" aria-modal="true" aria-labelledby="rq-title">
+  <div class="card">
+    <h2 id="rq-title">Request API access</h2>
+    <p class="sub">We reply by email with a key. Free while the engine is in beta.</p>
+    <form data-form novalidate>
+      <label for="f-name">Name</label>
+      <input id="f-name" name="name" type="text" required maxlength="200" autocomplete="name" />
+
+      <label for="f-email">Email</label>
+      <input id="f-email" name="email" type="email" required maxlength="254" autocomplete="email" />
+
+      <label for="f-org">Organization <i>(optional)</i></label>
+      <input id="f-org" name="organization" type="text" maxlength="200" autocomplete="organization" />
+
+      <label for="f-use">What are you building?</label>
+      <textarea id="f-use" name="use_case" required maxlength="2000"
+                placeholder="The product, who uses it, and the kind of questions you expect to send."></textarea>
+
+      <label for="f-vol">Expected volume <i>(optional)</i></label>
+      <input id="f-vol" name="expected_volume" type="text" maxlength="120" placeholder="e.g. 2000 requests per day" />
+
+      <div class="msg" data-msg></div>
+      <div class="row">
+        <button type="button" class="cancel" data-close>Cancel</button>
+        <button type="submit" class="send">Send request</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var backdrop = document.querySelector('[data-backdrop]');
+    var form = document.querySelector('[data-form]');
+    var msg = document.querySelector('[data-msg]');
+    var send = form.querySelector('.send');
+
+    function open(event) {
+      if (event) { event.preventDefault(); }
+      backdrop.dataset.open = 'true';
+      form.querySelector('input').focus();
+    }
+    function close() { backdrop.dataset.open = 'false'; }
+    function say(kind, text) { msg.dataset.kind = kind; msg.textContent = text; }
+
+    Array.prototype.forEach.call(document.querySelectorAll('[data-open]'), function (el) {
+      el.addEventListener('click', open);
+    });
+    document.querySelector('[data-close]').addEventListener('click', close);
+    backdrop.addEventListener('click', function (e) { if (e.target === backdrop) { close(); } });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && backdrop.dataset.open === 'true') { close(); }
+    });
+
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var payload = {
+        name: form.name.value.trim(),
+        email: form.email.value.trim(),
+        organization: form.organization.value.trim(),
+        use_case: form.use_case.value.trim(),
+        expected_volume: form.expected_volume.value.trim()
+      };
+      if (!payload.name || !payload.email || !payload.use_case) {
+        say('error', 'Name, email, and what you are building are required.');
+        return;
+      }
+      send.disabled = true;
+      say('ok', 'Sending…');
+      fetch('/api/v1/intelligence/access-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(function (r) {
+        return r.json().then(function (b) { return { ok: r.ok, status: r.status, body: b }; });
+      }).then(function (res) {
+        send.disabled = false;
+        if (res.ok) { form.reset(); say('ok', 'Request received. We will reply by email.'); return; }
+        if (res.status === 429) { say('error', 'Too many requests from this address. Try again later.'); return; }
+        say('error', (res.body && res.body.detail) || 'Could not send the request.');
+      }).catch(function () {
+        send.disabled = false;
+        say('error', 'Network error. Please try again.');
+      });
+    });
+  })();
+</script>
+</body>
+</html>

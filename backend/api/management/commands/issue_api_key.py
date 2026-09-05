@@ -38,6 +38,11 @@ class Command(BaseCommand):
                             help="Batas laju khusus, mis. '120/min'. Kosong = bawaan.")
         parser.add_argument("--request", type=int, default=None,
                             help="ID ApiAccessRequest yang ditautkan, sekaligus menandainya disetujui.")
+        parser.add_argument("--email", action="store_true",
+                            help="Kirim kunci ke alamat pemohon. Perlu --request, "
+                                 "atau --to untuk alamat lain.")
+        parser.add_argument("--to", default="",
+                            help="Alamat tujuan pengiriman kunci, bila bukan dari --request.")
 
     def handle(self, *args, **options):
         consumer = options["consumer"].strip()
@@ -91,3 +96,38 @@ class Command(BaseCommand):
         self.stdout.write("")
         self.stdout.write("  Simpan di variabel lingkungan sisi server milik konsumen, "
                           "jangan di kode frontend.")
+
+        if options["email"]:
+            self._deliver(raw_key, key, access_request, options["to"].strip())
+
+    def _deliver(self, raw_key, key, access_request, override):
+        """
+        Kirim kunci ke pemohon.
+
+        Kegagalan dilaporkan dengan lantang, bukan ditelan: nilai asli kunci
+        hanya pernah ada di layar ini, jadi operator harus tahu persis apakah
+        surelnya sampai atau perlu dikirim dengan cara lain.
+        """
+        recipient = override or (access_request.email if access_request else "")
+        if not recipient:
+            self.stdout.write(self.style.ERROR(
+                "  Pengiriman dilewati: tidak ada alamat tujuan. "
+                "Pakai --request <id> atau --to <email>."))
+            return
+
+        from api.email_service import email_service
+
+        sent = email_service.send_api_key(
+            recipient=recipient,
+            api_key=raw_key,
+            name=(access_request.name if access_request else ""),
+            label=key.label,
+            rate=key.rate,
+        )
+        self.stdout.write("")
+        if sent:
+            self.stdout.write(self.style.SUCCESS(f"  Kunci dikirim ke {recipient}."))
+        else:
+            self.stdout.write(self.style.ERROR(
+                f"  GAGAL mengirim ke {recipient}. Kunci di atas tetap berlaku; "
+                "sampaikan lewat jalur lain atau cabut dan terbitkan ulang."))

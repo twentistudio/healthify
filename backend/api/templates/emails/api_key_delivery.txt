@@ -1,0 +1,36 @@
+Your ragai API key
+
+Hello {{ name }},
+
+Your request for access to the ragai health intelligence engine has been
+approved. Your API key is below.
+
+    {{ api_key }}
+
+This is the only time the key is sent. It is stored as a hash on our side and
+cannot be shown again. If it is lost or exposed, ask for a replacement and the
+old one will be revoked.
+
+Getting started
+---------------
+Send the key in the X-API-Key header:
+
+    curl -X POST {{ base_url }}/api/v1/intelligence/query \
+      -H "X-API-Key: {{ api_key }}" \
+      -H "Content-Type: application/json" \
+      -d '{"query": "Is dengue transmitted by mosquitoes?", "options": {"format": "simple"}}'
+
+Full documentation: {{ base_url }}/docs
+
+Keep it server side
+-------------------
+Store the key in an environment variable on your server. Anything placed in
+frontend code can be read by anyone who opens the page.
+
+Rate limit: {{ rate }}
+{% if label %}Key label : {{ label }}
+{% endif %}
+While the engine is in beta, access is free of charge. We will give advance
+notice before that changes.
+
+If you did not request this key, reply to this message and we will revoke it.

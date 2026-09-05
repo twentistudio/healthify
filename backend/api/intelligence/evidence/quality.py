@@ -164,13 +164,36 @@ def score_evidence_type(text: str = "", title: str = "") -> float:
 
 
 def score_context_match(text: str, title: str, context_terms: Iterable[str]) -> float:
-    """Seberapa banyak istilah dari health context user muncul di evidence."""
+    """
+    Seberapa banyak istilah dari health context user muncul di evidence.
+
+    Istilah konteks berasal dari kalimat pengguna, jadi berbahasa Indonesia,
+    sedangkan hampir seluruh knowledge base berbahasa Inggris. Mencocokkan apa
+    adanya membuat komponen ini nyaris selalu bernilai nol, sehingga setiap
+    jurnal berbahasa Inggris kehilangan bobotnya tanpa alasan yang sebenarnya.
+    Padanan Inggris tiap istilah ikut dihitung: satu istilah dianggap cocok
+    bila bentuk mana pun darinya muncul.
+    """
     terms = [t.strip().lower() for t in (context_terms or []) if t and str(t).strip()]
     if not terms:
         return 0.0
+
     haystack = f"{title or ''} {text or ''}".lower()
-    hits = sum(1 for t in set(terms) if t in haystack)
-    return _clamp(hits / float(len(set(terms))))
+    unique = set(terms)
+
+    hits = 0
+    for term in unique:
+        forms = {term}
+        try:
+            from ..lexicon import bilingual_variants
+
+            forms |= {v.lower() for v in bilingual_variants(term)}
+        except Exception:  # pragma: no cover - leksikon tidak wajib
+            pass
+        if any(form in haystack for form in forms):
+            hits += 1
+
+    return _clamp(hits / float(len(unique)))
 
 
 def compute_evidence_score(item, context_terms: Optional[Iterable[str]] = None) -> float:

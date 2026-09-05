@@ -21,7 +21,9 @@ def _contact_block() -> Dict[str, Any]:
     """
     from django.conf import settings
 
-    contact: Dict[str, Any] = {"name": "Healthify"}
+    contact: Dict[str, Any] = {
+        "name": getattr(settings, "ENGINE_BRAND_NAME", "ragai"),
+    }
     url = getattr(settings, "API_CONTACT_URL", "")
     email = getattr(settings, "API_CONTACT_EMAIL", "")
     if url.startswith(("http://", "https://")):
@@ -81,13 +83,20 @@ def build_openapi_spec(base_url: str = "") -> Dict[str, Any]:
         if host and not host.startswith(".")
         and host not in ("localhost", "127.0.0.1", "*", "testserver")
     ]
-    server_url = f"https://{public_hosts[0]}" if public_hosts else (base_url or "/")
+    # Alamat publik engine berasal dari konfigurasi, bukan ditebak dari daftar
+    # host yang diizinkan: daftar itu memuat domain produk Healthify juga, dan
+    # menebak dari sana pernah membuat dokumentasi menunjuk domain yang salah.
+    configured = getattr(settings, "PUBLIC_API_BASE_URL", "")
+    if configured.startswith(("http://", "https://")):
+        server_url = configured.rstrip("/")
+    else:
+        server_url = f"https://{public_hosts[0]}" if public_hosts else (base_url or "/")
     servers = [{"url": server_url, "description": "Production"}]
 
     spec: Dict[str, Any] = {
         "openapi": "3.1.0",
         "info": {
-            "title": "Healthify Intelligence API",
+            "title": "ragai Health Intelligence API",
             "version": ENGINE_VERSION,
             "summary": "Health information grounded in peer reviewed journal literature.",
             "description": _DESCRIPTION.strip() + _access_request_note(),
@@ -148,9 +157,18 @@ _DESCRIPTION = r"""
 Send one health question. Receive an answer grounded in peer reviewed journal
 literature, together with the sources it was built from. Every DOI is checked
 against the official registry before it is returned, so the links you receive
-resolve.
+resolve, and every title is taken from the registry rather than from the model.
+
+When the literature does not cover a question, the engine says so rather than
+writing something plausible. Treat that as the useful case it is: it is the
+difference between a citation you can hand to a reader and one you cannot.
 
 There is no SDK and no OAuth. One POST request, one header.
+
+**Status: beta.** Access is free while the engine is in beta. The index is still
+growing, answers can be shallow on topics with thin literature, and the response
+may gain fields. Fields are added, not removed or renamed, and key holders are
+notified by email before anything breaking ships.
 
 ## Requesting access
 
@@ -174,7 +192,7 @@ in your request and a higher limit can be issued for your key alone.
 ### 1. Send a question
 
 ```bash
-curl -X POST https://healthify.twenti.studio/api/v1/intelligence/query \
+curl -X POST https://ragai.twenti.studio/api/v1/intelligence/query \
   -H "Content-Type: application/json" \
   -H "X-API-Key: YOUR_API_KEY" \
   -d '{
@@ -187,7 +205,7 @@ curl -X POST https://healthify.twenti.studio/api/v1/intelligence/query \
 ```javascript
 async function askHealthify(question) {
   const res = await fetch(
-    "https://healthify.twenti.studio/api/v1/intelligence/query",
+    "https://ragai.twenti.studio/api/v1/intelligence/query",
     {
       method: "POST",
       headers: {
@@ -245,7 +263,7 @@ Only `query` is required.
 | `mode` | No | `information` for knowledge questions, `consultation` when the user describes symptoms, `medication` for drug questions, `claim` to assess whether a health claim holds. Defaults to `consultation`. |
 | `options.format` | No | `"simple"` returns the answer and its sources only. Use this. The default `"full"` returns the complete internal structure. |
 | `options.max_evidence` | No | Number of journals returned, 1 to 20. Defaults to 8. |
-| `context.session_id` | No | Set when the conversation continues. See Multi turn conversations below. |
+| `context.conversation_id` | No | Your own chat room identifier. `session_id`, `room_id`, `thread_id` and `chat_id` are accepted too. See Multi turn conversations below. |
 
 Send the question as the user wrote it. Do not prepend your own instructions or
 prompt text. The engine already handles question understanding, literature
@@ -309,20 +327,79 @@ if (result.has_evidence) {
 
 ## Multi turn conversations
 
-Send the same `context.session_id` on every turn. Healthify retains the history
-and the accumulated health context, so you do not resend previous messages.
+### What to send
+
+Send an identifier for the chat room on every turn. Use whatever identifier
+your product already has: a room id, a thread id, a ticket number. Nothing has
+to be registered in advance, and there is no separate call to open a session.
+The engine creates it on first use and recognises it from then on.
+
+Any one of these field names is accepted, so you can send the field you already
+have:
+
+```json
+{
+  "query": "Is that normal?",
+  "context": { "conversation_id": "room-8812" }
+}
+```
+
+| Accepted field | Note |
+|-|-|
+| `context.conversation_id` | Preferred |
+| `context.session_id` | Equivalent |
+| `context.room_id` | Equivalent |
+| `context.thread_id` | Equivalent |
+| `context.chat_id` | Equivalent |
+
+Identifiers are scoped to your API key. Two products may both use `"room-1"`
+without ever seeing each other's conversations.
+
+You do not resend previous messages. The engine keeps the history and the
+health context it has accumulated, and resolves references like "that" or
+"it" against earlier turns.
 
 ```javascript
-const session = { session_id: "chat-8812" };
+const room = { conversation_id: "room-8812" };
 
-await ask({ query: "I have a fever",   mode: "consultation", context: session });
-await ask({ query: "For three days",   mode: "consultation", context: session });
-await ask({ query: "Is that normal?",  mode: "consultation", context: session });
+await ask({ query: "I have a fever",  mode: "consultation", context: room });
+await ask({ query: "For three days",  mode: "consultation", context: room });
+await ask({ query: "Is that normal?", mode: "consultation", context: room });
 // the third turn understands "that" as a three day fever
 ```
 
+If your backend prefers to keep the history itself, omit the identifier and
+send `context.previous_messages` instead. The engine then holds no state.
+
+### Which journals answer a follow up
+
+Inside one room a topic is discussed across several messages, and the answers
+have to stay consistent with each other. The engine follows one rule:
+
+1. The first question searches the literature and selects the journals that
+   answer it.
+2. A follow up is checked against those journals. While they still answer the
+   question, the same journals are used again, so the answers in that room
+   stay anchored to the same references rather than shifting between turns.
+3. When the question moves beyond what those journals cover, a fresh search
+   runs and new references are selected.
+
+Every response tells you which of the two happened, so you can decide how to
+render the references:
+
+| Field | Meaning |
+|-|-|
+| `sources_reused: true` | same references as the previous turn in this room |
+| `sources_reused: false` | references were selected by a new search |
+
+A common use is to print the reference list once when it changes, and to omit
+it on turns that reuse it, instead of repeating the same citations under every
+message.
+
+### Closing a conversation
+
 At the end of a session, `POST /api/v1/intelligence/summary` with
-`{"session_id": "chat-8812"}` returns a structured summary in which every part
+`{"session_id": "room-8812"}` returns a structured summary in which every part
 carries the provenance of its information.
 
 ## Backend integration
@@ -667,6 +744,14 @@ def _schemas(intents, modes, evidence_status, safety_decisions, provenance):
                                    "example an emergency signal.",
                 },
                 "conversation_id": {"type": ["string", "null"]},
+                "sources_reused": {
+                    "type": "boolean",
+                    "description": "True means this turn is anchored to the same "
+                                   "journals as the previous turn in this room, "
+                                   "rather than to a fresh search. Useful for "
+                                   "printing the reference list only when it "
+                                   "changes.",
+                },
                 "request_id": {"type": ["string", "null"]},
             },
         },
@@ -769,7 +854,7 @@ def _paths():
                         "lang": "cURL",
                         "label": "curl",
                         "source": (
-                            "curl -X POST https://healthify.twenti.studio/api/v1/intelligence/query \\\n"
+                            "curl -X POST https://ragai.twenti.studio/api/v1/intelligence/query \\\n"
                             "  -H \"Content-Type: application/json\" \\\n"
                             "  -H \"X-API-Key: API_KEY\" \\\n"
                             "  -d '{\n"
@@ -784,7 +869,7 @@ def _paths():
                         "label": "fetch (server-side)",
                         "source": (
                             "const res = await fetch(\n"
-                            "  \"https://healthify.twenti.studio/api/v1/intelligence/query\",\n"
+                            "  \"https://ragai.twenti.studio/api/v1/intelligence/query\",\n"
                             "  {\n"
                             "    method: \"POST\",\n"
                             "    headers: {\n"
@@ -808,7 +893,7 @@ def _paths():
                         "source": (
                             "import os, requests\n\n"
                             "res = requests.post(\n"
-                            "    \"https://healthify.twenti.studio/api/v1/intelligence/query\",\n"
+                            "    \"https://ragai.twenti.studio/api/v1/intelligence/query\",\n"
                             "    headers={\"X-API-Key\": os.environ[\"HEALTHIFY_API_KEY\"]},\n"
                             "    json={\n"
                             "        \"query\": \"What causes dengue fever?\",\n"
@@ -943,6 +1028,7 @@ def _paths():
                                 "has_evidence": True,
                                 "notice": None,
                                 "conversation_id": None,
+                                "sources_reused": False,
                                 "request_id": "9f2c1a...",
                             },
                         }},

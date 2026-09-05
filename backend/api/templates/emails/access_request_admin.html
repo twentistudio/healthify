@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<body style="margin:0;padding:24px;background:#f5f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1f2933;">
+  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:10px;padding:28px;">
+    <p style="margin:0 0 4px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#8a94a6;">ragai</p>
+    <h1 style="margin:0 0 20px;font-size:19px;font-weight:600;">New API access request</h1>
+
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <tr><td style="padding:6px 0;color:#8a94a6;width:132px;">Name</td><td style="padding:6px 0;">{{ request_obj.name }}</td></tr>
+      <tr><td style="padding:6px 0;color:#8a94a6;">Email</td><td style="padding:6px 0;"><a href="mailto:{{ request_obj.email }}" style="color:#1f2933;">{{ request_obj.email }}</a></td></tr>
+      <tr><td style="padding:6px 0;color:#8a94a6;">Organization</td><td style="padding:6px 0;">{{ request_obj.organization|default:"not stated" }}</td></tr>
+      <tr><td style="padding:6px 0;color:#8a94a6;">Expected volume</td><td style="padding:6px 0;">{{ request_obj.expected_volume|default:"not stated" }}</td></tr>
+      <tr><td style="padding:6px 0;color:#8a94a6;">Request ID</td><td style="padding:6px 0;">{{ request_obj.id }}</td></tr>
+    </table>
+
+    <p style="margin:22px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#8a94a6;">Intended use</p>
+    <p style="margin:0;padding:14px 16px;background:#f5f6f8;border-radius:8px;font-size:14px;line-height:1.6;white-space:pre-wrap;">{{ request_obj.use_case }}</p>
+
+    <p style="margin:24px 0 8px;font-size:14px;">To approve, issue a key and email it to the requester:</p>
+    <pre style="margin:0;padding:14px 16px;background:#111827;color:#e5e7eb;border-radius:8px;font-size:12.5px;overflow-x:auto;">python manage.py issue_api_key \
+  --consumer &lt;name&gt; --request {{ request_obj.id }} --email</pre>
+
+    <p style="margin:20px 0 0;font-size:13px;color:#8a94a6;">Nothing is granted until you run that command.</p>
+  </div>
+</body>
+</html>

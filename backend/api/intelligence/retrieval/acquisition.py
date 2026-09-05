@@ -39,6 +39,8 @@ import hashlib
 import html
 import logging
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -83,6 +85,10 @@ BUDGET_WINDOW = 60 * 60
 ROWS_PER_TOPIC = 12
 FROM_YEAR = 2015
 NETWORK_TIMEOUT = 12
+
+# Berapa verifikasi DOI yang berjalan berbarengan. Cukup untuk memangkas waktu
+# tunggu, masih sopan terhadap registry.
+VERIFY_WORKERS = 6
 
 
 def _cache_get(key, default=None):
@@ -189,15 +195,36 @@ def coverage_is_thin(query: str, evidence) -> bool:
     pun kata isi dari pertanyaan (atau padanan Inggrisnya, bila diketahui)
     muncul di judul atau ringkasan bukti mana pun, topiknya belum terwakili.
     """
+    haystack = " ".join(
+        f"{getattr(item, 'title', '') or ''} {getattr(item, 'snippet', '') or ''}"
+        for item in (evidence or [])
+    ).lower()
+    if not haystack.strip():
+        return True
+
+    # Bila pertanyaan menyebut penyakit yang dikenali, itulah ukurannya:
+    # cukup salah satunya (atau padanan Inggrisnya) muncul di bukti. Tanpa
+    # aturan ini kata Indonesia biasa seperti "menular" atau "makanan" membuat
+    # pertanyaan yang sudah terjawab lengkap tetap dinilai tidak terwakili,
+    # dan setiap pertanyaan memicu pengambilan yang tidak perlu.
+    conditions = extract_conditions(query) or []
+    if conditions:
+        wanted = set()
+        for condition in conditions:
+            wanted.add(condition.lower())
+            for variant in bilingual_variants(condition):
+                wanted.add(variant.lower())
+        return not any(term in haystack for term in wanted)
+
+    # Tidak ada penyakit yang dikenali. Kandidatnya adalah kata yang belum
+    # tercatat di leksikon — persis keadaan penyakit seperti "skabies" atau
+    # "kawasaki", yang tidak akan pernah terlihat bila hanya bersandar pada
+    # daftar buatan tangan.
     tokens = [w for w in re.findall(r"[a-z0-9]{5,}", (query or "").lower())
               if w not in _QUERY_NOISE]
     if not tokens:
         return False
 
-    # Kata yang paling menentukan adalah yang TIDAK dikenali leksikon: itulah
-    # kandidat penyakit yang belum tercatat. Menerima kata umum sebagai bukti
-    # kecukupan membuat pertanyaan tentang skabies dianggap terjawab oleh paper
-    # infeksi kulit mana pun, hanya karena kata "kulit" muncul di judulnya.
     known = {c.lower() for c in (extract_health_concepts(query) or [])}
     distinctive = [w for w in tokens
                    if not any(w in term or term in w for term in known)]
@@ -207,13 +234,6 @@ def coverage_is_thin(query: str, evidence) -> bool:
     for token in probe:
         for variant in bilingual_variants(token):
             wanted.add(variant.lower())
-
-    haystack = " ".join(
-        f"{getattr(item, 'title', '') or ''} {getattr(item, 'snippet', '') or ''}"
-        for item in (evidence or [])
-    ).lower()
-    if not haystack.strip():
-        return True
 
     return not any(term in haystack for term in wanted)
 
@@ -326,6 +346,16 @@ def build_record(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _safe_record(item):
+    """`build_record` yang tidak pernah melempar, supaya satu artikel rusak
+    tidak menggagalkan seluruh pengambilan."""
+    try:
+        return build_record(item)
+    except Exception as exc:
+        logger.warning("[ACQ] artikel dilewati: %s", exc)
+        return None
+
+
 def ensure_coverage(query: str, health_checked: bool = False) -> int:
     """
     Lengkapi basis pengetahuan untuk topik `query`, kembalikan jumlah jurnal
@@ -380,15 +410,34 @@ def ensure_coverage(query: str, health_checked: bool = False) -> int:
         logger.warning("[ACQ] pencarian gagal untuk %r: %s", topic, exc)
         return 0
 
-    created = 0
+    # Saring yang sudah ada lebih dulu, dengan SATU query, bukan satu query per
+    # artikel.
+    dois = {}
     for item in items:
+        doi = lv.normalize_doi(item.get("DOI"))
+        if doi:
+            dois.setdefault(doi, item)
+    if not dois:
+        return 0
+
+    existing = set(JournalArticle.objects.filter(doi__in=list(dois))
+                   .values_list("doi", flat=True))
+    fresh = [item for doi, item in dois.items() if doi not in existing]
+    if not fresh:
+        return 0
+
+    # Verifikasi DOI berjalan berbarengan. Berurutan, dua belas artikel berarti
+    # dua belas perjalanan jaringan yang saling menunggu; permintaan pengguna
+    # ikut menunggu seluruhnya.
+    records = []
+    with ThreadPoolExecutor(max_workers=VERIFY_WORKERS) as pool:
+        for record in pool.map(_safe_record, fresh):
+            if record:
+                records.append(record)
+
+    created = 0
+    for record in records:
         try:
-            doi = lv.normalize_doi(item.get("DOI"))
-            if not doi or JournalArticle.objects.filter(doi=doi).exists():
-                continue
-            record = build_record(item)
-            if not record:
-                continue
             JournalArticle.objects.create(**record)
             created += 1
         except Exception as exc:
@@ -400,24 +449,49 @@ def ensure_coverage(query: str, health_checked: bool = False) -> int:
     return created
 
 
+_embedding_lock = threading.Lock()
+
+
 def _embed_new_articles() -> None:
     """
-    Buat embedding untuk jurnal yang belum punya, sekadar upaya terbaik.
+    Buat embedding untuk jurnal yang belum punya, di luar permintaan.
 
-    Tanpa embedding, jurnal baru hanya terjangkau lewat kecocokan kata kunci
-    dan akan tersaring oleh lantai kemiripan makna.
+    Satu embedding memakan lebih dari satu detik. Mengerjakan dua puluh empat
+    di dalam permintaan menambahkan hampir setengah menit ke waktu tunggu
+    pengguna, dan itulah penyebab terbesar lambatnya jawaban pertama untuk
+    sebuah topik baru.
+
+    Menundanya tidak membuat jurnal baru hilang dari jangkauan: tanpa embedding
+    ia tetap ditemukan lewat pencocokan kata kunci, yang memang jalur yang
+    dipakai percobaan ulang (istilah Inggris hasil terjemahan). Embedding
+    hanya menambah ketajaman, dan menyusul beberapa detik kemudian.
+
+    Hanya satu utas yang berjalan pada satu waktu, supaya lonjakan pertanyaan
+    baru tidak berubah menjadi lonjakan pemanggilan penyedia embedding.
     """
-    try:
-        from api.views import embed_journal_article
-        from api.models import JournalArticle
-    except Exception:
+    if not _embedding_lock.acquire(blocking=False):
         return
 
-    # Dibatasi karena berjalan di tengah permintaan HTTP; sisanya menyusul
-    # pada pemanggilan berikutnya atau lewat `import_journals --embed`.
-    pending = JournalArticle.objects.filter(is_embedded=False)[:ROWS_PER_TOPIC * 2]
-    for article in pending:
+    def worker():
         try:
-            embed_journal_article(article)
-        except Exception:
-            continue
+            from django.db import connection
+
+            from api.models import JournalArticle
+            from api.views import embed_journal_article
+
+            try:
+                pending = list(JournalArticle.objects.filter(is_embedded=False)[:64])
+                for article in pending:
+                    try:
+                        embed_journal_article(article)
+                    except Exception:
+                        continue
+                if pending:
+                    logger.info("[ACQ] %d embedding menyusul di latar belakang", len(pending))
+            finally:
+                # Koneksi milik utas ini tidak dipakai siapa pun lagi.
+                connection.close()
+        finally:
+            _embedding_lock.release()
+
+    threading.Thread(target=worker, name="healthify-embed", daemon=True).start()

@@ -71,6 +71,16 @@ _UNSUPPORTED_TEMPLATE_ID = (
     "kesehatan berbasis literatur ilmiah."
 )
 
+_SMALL_TALK_TEMPLATE_ID = (
+    "Sama-sama. Silakan sampaikan bila ada yang ingin ditanyakan seputar "
+    "kesehatan, dan saya akan mencarikan rujukannya dari literatur ilmiah."
+)
+
+_GREETING_TEMPLATE_ID = (
+    "Halo. Silakan sampaikan pertanyaan atau keluhan kesehatan Anda, dan saya "
+    "akan mencarikan jawabannya beserta rujukan jurnalnya."
+)
+
 _CITATION_RE = re.compile(r"\[E(\d{1,2})\]")
 
 
@@ -257,6 +267,15 @@ def generate_response(query: str,
     if intent == Intent.UNSUPPORTED:
         meta["generator"] = "template_unsupported"
         return _UNSUPPORTED_TEMPLATE_ID, meta
+
+    # Basa-basi dijawab seperlunya. Menjalankan pencarian literatur untuk
+    # "terima kasih" memakan waktu dan biaya, lalu melampirkan lima jurnal yang
+    # tidak ada hubungannya dengan apa pun yang ditanyakan.
+    if intent == Intent.SMALL_TALK:
+        meta["generator"] = "template_small_talk"
+        greeting = bool(re.match(r"^\W*(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalam)",
+                                 (query or "").strip().lower()))
+        return (_GREETING_TEMPLATE_ID if greeting else _SMALL_TALK_TEMPLATE_ID), meta
 
     # §16 — bukti tidak cukup: JANGAN minta LLM menebak.
     if evidence_status == EvidenceStatus.INSUFFICIENT_EVIDENCE or not evidence:

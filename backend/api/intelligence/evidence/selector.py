@@ -11,6 +11,7 @@ Kalau bukti tidak cukup, pipeline TIDAK boleh menyuruh LLM menebak — lihat
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable, List, Optional, Tuple
 
 from ..contracts import EvidenceItem, EvidenceOrigin, EvidenceStatus
@@ -29,6 +30,9 @@ MIN_TOP_SCORE_PARTIAL = 0.38
 # yang ditanyakan. Kumpulan paper yang sekadar menyebut penyakit yang sama
 # bukan jawaban, dan menyebutnya memadai justru menyesatkan pembaca.
 MIN_ASPECT_MATCH_SUFFICIENT = 0.5
+
+# Berapa validasi tautan yang berjalan berbarengan.
+VALIDATION_WORKERS = 8
 
 # Lantai kemiripan makna terhadap pertanyaan.
 #
@@ -54,41 +58,65 @@ _TRUSTED_ORIGINS = {
 
 
 def validate_links(items: Iterable[EvidenceItem], timeout: float = 5.0) -> List[EvidenceItem]:
-    """Validasi DOI/URL setiap item dan tulis balik hasilnya ke item."""
-    validated: List[EvidenceItem] = []
-    for item in items or []:
-        try:
-            result = lv.validate_reference(
-                item.doi,
-                item.url,
-                timeout=timeout,
-                trust_on_unknown=item.origin in _TRUSTED_ORIGINS,
-            )
-        except Exception as exc:  # pragma: no cover - jaring pengaman
-            logger.warning("[EVIDENCE] validasi link gagal: %s", exc)
-            result = {"doi": "", "url": "", "doi_verified": False, "link_status": lv.STATUS_UNKNOWN}
+    """
+    Validasi DOI/URL setiap item dan tulis balik hasilnya ke item.
 
-        item.doi = result["doi"]
-        item.url = result["url"]
-        item.doi_verified = result["doi_verified"]
-        item.link_status = result["link_status"]
+    Setiap item butuh sampai dua perjalanan jaringan: memastikan DOI-nya
+    terdaftar, lalu mengambil judul resminya. Dikerjakan berurutan, delapan
+    referensi berarti belasan permintaan yang saling menunggu — sekitar tiga
+    detik yang seluruhnya ditanggung orang yang sedang menunggu jawaban.
+    Dikerjakan berbarengan, biayanya tinggal satu perjalanan terlama.
 
-        # Judul WAJIB berasal dari registry, bukan dari pihak yang mengirimkan.
-        #
-        # Memastikan sebuah DOI terdaftar ternyata belum cukup: judul yang
-        # meyakinkan bisa dipasangkan dengan DOI yang kebetulan nyata tetapi
-        # milik paper lain, sehingga judul di layar berbeda dengan halaman yang
-        # terbuka saat diklik. Registry adalah satu-satunya otoritas di sini.
-        if item.doi and item.doi_verified:
-            _apply_registry_metadata(item, timeout=timeout)
+    Hasilnya sendiri di-cache, jadi ongkos ini hanya muncul pada DOI yang baru
+    pertama kali dilihat.
+    """
+    items = list(items or [])
+    if not items:
+        return []
 
-        # Sumber karangan LLM yang DOI-nya ternyata benar-benar ada
-        # dipromosikan menjadi VERIFIED_REGISTRY.
-        if item.origin == EvidenceOrigin.MODEL_SUGGESTED and item.doi_verified:
-            item.origin = EvidenceOrigin.VERIFIED_REGISTRY
+    if len(items) > 1:
+        with ThreadPoolExecutor(max_workers=min(VALIDATION_WORKERS, len(items))) as pool:
+            list(pool.map(lambda item: _validate_one(item, timeout), items))
+        return items
 
-        validated.append(item)
-    return validated
+    _validate_one(items[0], timeout)
+    return items
+
+
+def _validate_one(item: EvidenceItem, timeout: float = 5.0) -> EvidenceItem:
+    """Validasi satu item. Dipisah agar bisa dijalankan berbarengan."""
+    try:
+        result = lv.validate_reference(
+            item.doi,
+            item.url,
+            timeout=timeout,
+            trust_on_unknown=item.origin in _TRUSTED_ORIGINS,
+        )
+    except Exception as exc:  # pragma: no cover - jaring pengaman
+        logger.warning("[EVIDENCE] validasi link gagal: %s", exc)
+        result = {"doi": "", "url": "", "doi_verified": False,
+                  "link_status": lv.STATUS_UNKNOWN}
+
+    item.doi = result["doi"]
+    item.url = result["url"]
+    item.doi_verified = result["doi_verified"]
+    item.link_status = result["link_status"]
+
+    # Judul WAJIB berasal dari registry, bukan dari pihak yang mengirimkan.
+    #
+    # Memastikan sebuah DOI terdaftar ternyata belum cukup: judul yang
+    # meyakinkan bisa dipasangkan dengan DOI yang kebetulan nyata tetapi milik
+    # paper lain, sehingga judul di layar berbeda dengan halaman yang terbuka
+    # saat diklik. Registry adalah satu-satunya otoritas di sini.
+    if item.doi and item.doi_verified:
+        _apply_registry_metadata(item, timeout=timeout)
+
+    # Sumber karangan LLM yang DOI-nya ternyata benar-benar ada dipromosikan
+    # menjadi VERIFIED_REGISTRY.
+    if item.origin == EvidenceOrigin.MODEL_SUGGESTED and item.doi_verified:
+        item.origin = EvidenceOrigin.VERIFIED_REGISTRY
+
+    return item
 
 
 def _apply_registry_metadata(item: EvidenceItem, timeout: float = 5.0) -> None:

@@ -650,6 +650,85 @@ def _dedupe(items: List[EvidenceItem]) -> List[EvidenceItem]:
     return unique
 
 
+def rescore_for_query(items, query: str, extra_terms=None):
+    """
+    Nilai ulang sekumpulan bukti terhadap pertanyaan yang sedang diajukan.
+
+    Dipakai untuk bukti yang dibangun ulang dari ingatan percakapan. Baris yang
+    dimuat dari basis data tidak membawa skor apa pun, sehingga tanpa penilaian
+    ulang seluruhnya jatuh di bawah ambang relevansi dan jawaban lanjutan
+    kehilangan rujukannya justru pada pembahasan yang sama.
+
+    Memakai fungsi penilaian yang sama dengan retrieval biasa, kemiripan makna
+    termasuk. Menghitung leksikalnya saja terdengar cukup untuk kumpulan kecil,
+    tetapi menghasilkan skor yang lebih rendah daripada saat jurnal itu pertama
+    kali terpilih — dan ambang kecukupan lalu menolaknya, sehingga jawaban
+    lanjutan kehilangan rujukan yang justru masih relevan. Embedding pertanyaan
+    sudah di-cache, dan cosine atas belasan baris praktis gratis.
+    """
+    terms = list(extra_terms or []) + extract_health_concepts(query)
+    groups = build_search_term_groups(" ".join([query] + terms))
+    aspect_groups = build_aspect_groups(query)
+    subjects = set(extract_conditions(query))
+
+    query_embedding = None
+    try:
+        query_embedding = embed_query(build_embedding_query(query, terms))
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[RETRIEVAL] embedding untuk penilaian ulang gagal: %s", exc)
+
+    stored = _stored_embeddings(items) if query_embedding else {}
+
+    for item in items or []:
+        title = item.title or ""
+        body = item.snippet or ""
+        lexical = _lexical_score(groups, title, body, "")
+        topical, off_topic = _topical_score(aspect_groups, subjects, title, body, "")
+
+        similarity = None
+        vector = stored.get(item.source_id)
+        if query_embedding and vector:
+            try:
+                similarity = _cosine(query_embedding, vector)
+            except Exception:
+                similarity = None
+
+        item.semantic_relevance = _blend_scores(lexical, similarity)
+        item.aspect_match = topical
+        item.off_topic = off_topic
+
+    return items
+
+
+def _stored_embeddings(items):
+    """Embedding yang sudah tersimpan untuk baris knowledge base terkait."""
+    import json
+
+    ids = []
+    for item in items or []:
+        kind, _, raw = (item.source_id or "").partition(":")
+        if kind == "journal" and raw.isdigit():
+            ids.append(int(raw))
+    if not ids:
+        return {}
+
+    vectors = {}
+    try:
+        from ...models import JournalArticle
+
+        rows = JournalArticle.objects.filter(id__in=ids).values_list("id", "embedding")
+        for row_id, raw in rows:
+            if not raw:
+                continue
+            try:
+                vectors[f"journal:{row_id}"] = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[RETRIEVAL] gagal memuat embedding tersimpan: %s", exc)
+    return vectors
+
+
 def retrieve_candidates(query: str,
                         extra_terms: Optional[List[str]] = None,
                         limit: int = DEFAULT_CANDIDATE_LIMIT,

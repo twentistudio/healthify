@@ -368,7 +368,11 @@ LOGGING = {
     'disable_existing_loggers': False,
     'formatters': {
         'verbose': {
-            'format': '[{levelname}] {asctime} {module} {message}',
+            # Nama logger, bukan nama modul. `{module}` menampilkan potongan
+            # seperti "_client" atau "log" yang tidak memberi tahu asalnya,
+            # sehingga saat menelusuri kebisingan log tidak ketahuan pustaka
+            # mana yang harus dibungkam.
+            'format': '[{levelname}] {asctime} {name} {message}',
             'style': '{',
         },
     },
@@ -396,6 +400,29 @@ LOGGING = {
         'api': {
             'handlers': ['console'],
             'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        # Klien HTTP pustaka OpenAI mencatat setiap panggilan pada level INFO.
+        # Isinya tidak menambah apa pun di atas log engine sendiri, yang sudah
+        # menyebut model, durasi, dan hasilnya; yang tersisa hanya kebisingan.
+        # Kegagalan tetap muncul karena dicatat pada level WARNING ke atas.
+        # Dua paket terpasang berdampingan: httpx 0.28 dan httpx2 2.12, yang
+        # dipakai klien OpenAI. Keduanya memakai nama logger sendiri, dan
+        # membungkam satu saja tidak mengubah apa pun — inilah sebabnya
+        # penyetelan pertama tampak tidak berpengaruh.
+        'httpx': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'httpx2': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'httpcore': {
+            'handlers': ['console'],
+            'level': 'WARNING',
             'propagate': False,
         },
     },
@@ -495,6 +522,15 @@ CACHES = {
 # Ke mana calon consumer mengirim permintaan akses API. Ditampilkan di
 # dokumentasi bila diisi; dibiarkan kosong berarti dokumentasi tidak menyebut
 # alamat apa pun (lebih baik daripada alamat karangan).
+# Alamat publik engine. Dipakai dokumentasi, surat pengiriman kunci, dan
+# halaman muka, sehingga alamat itu hanya ditulis di satu tempat.
+PUBLIC_API_BASE_URL = os.getenv('PUBLIC_API_BASE_URL', 'https://ragai.twenti.studio')
+
+# Nama yang dipakai engine saat berkirim surat. Produk Healthify punya namanya
+# sendiri; pemohon kunci API tidak seharusnya menerima surat atas nama produk
+# yang tidak mereka kenal.
+ENGINE_BRAND_NAME = os.getenv('ENGINE_BRAND_NAME', 'ragai')
+
 API_CONTACT_EMAIL = os.getenv('API_CONTACT_EMAIL', '').strip()
 API_CONTACT_URL = os.getenv('API_CONTACT_URL', '').strip()
 

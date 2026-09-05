@@ -251,7 +251,8 @@ class ConversationContextTests(TestCase):
             health_context=context,
         )
 
-        state = load_state("HT-TEST-1")
+        # Sesi disimpan per consumer, jadi dibaca dengan consumer yang sama.
+        state = load_state("HT-TEST-1", consumer="healthtalk")
         self.assertEqual(len(state.messages), 2)
         self.assertEqual(state.health_context.duration, "3 hari")
         self.assertIn("demam", state.health_context.symptoms)
@@ -730,9 +731,15 @@ class EngineTests(TestCase):
 
         self.assertEqual(second.health_context.duration, "3 hari")
         self.assertIn("demam", second.health_context.symptoms)
-        self.assertEqual(ConversationSession.objects.filter(session_id="HT-ENG-2").count(), 1)
+        from .intelligence.context.conversation import find_session
+
+        # Baris sesi kini bernama per consumer; yang penting satu ruang obrolan
+        # tetap menghasilkan tepat satu sesi.
+        self.assertIsNotNone(find_session("HT-ENG-2", consumer="healthtalk"))
+        self.assertEqual(ConversationSession.objects.count(), 1)
         self.assertEqual(
-            ConversationMessage.objects.filter(session__session_id="HT-ENG-2").count(), 4
+            ConversationMessage.objects.filter(
+                session=find_session("HT-ENG-2", consumer="healthtalk")).count(), 4
         )
 
     def test_every_published_evidence_has_safe_link(self):
@@ -802,7 +809,9 @@ class ConsultationSummaryTests(TestCase):
         for message in ("Saya demam", "Sudah tiga hari", "Sekarang batuk juga"):
             engine.process({"query": message, "mode": "consultation",
                             "context": {"session_id": "HT-SUM-1"}}, consumer="healthtalk")
-        self.session = ConversationSession.objects.get(session_id="HT-SUM-1")
+        from .intelligence.context.conversation import find_session
+
+        self.session = find_session("HT-SUM-1", consumer="healthtalk")
 
     def test_summary_extracts_only_reported_information(self):
         from .intelligence.summarization.summarizer import build_summary
@@ -1884,26 +1893,48 @@ class OpenApiServerListTests(TestCase):
 
     @override_settings(ALLOWED_HOSTS=["healthify.twenti.studio", "localhost",
                                       "127.0.0.1", ".railway.app"])
+    # Alamat publik kini berasal dari konfigurasi. Jalur menebak dari
+    # ALLOWED_HOSTS tetap ada sebagai cadangan, dan itulah yang diuji di bawah,
+    # jadi PUBLIC_API_BASE_URL sengaja dikosongkan.
+
+    def test_configured_public_address_wins(self):
+        """
+        Alamat publik berasal dari konfigurasi. Menebaknya dari ALLOWED_HOSTS
+        pernah membuat dokumentasi menunjuk domain produk Healthify, bukan
+        domain engine.
+        """
+        from api.openapi import build_openapi_spec
+
+        with self.settings(PUBLIC_API_BASE_URL="https://ragai.example.com",
+                           ALLOWED_HOSTS=["healthify.example.com"]):
+            servers = build_openapi_spec(base_url="http://testserver")["servers"]
+
+        self.assertEqual(len(servers), 1)
+        self.assertEqual(servers[0]["url"], "https://ragai.example.com")
+        self.assertEqual(servers[0]["description"], "Production")
+
     def test_single_production_server_is_published(self):
         """Kontrak publik menyebut satu server, bukan peta deployment internal."""
         from api.openapi import build_openapi_spec
 
-        servers = build_openapi_spec(base_url="http://testserver")["servers"]
+        with self.settings(PUBLIC_API_BASE_URL="", ALLOWED_HOSTS=["api.example.com"]):
+            servers = build_openapi_spec(base_url="http://testserver")["servers"]
 
         self.assertEqual(len(servers), 1)
-        self.assertEqual(servers[0]["url"], "https://healthify.twenti.studio")
+        self.assertEqual(servers[0]["url"], "https://api.example.com")
         self.assertEqual(servers[0]["description"], "Production")
 
     def test_local_and_wildcard_hosts_are_never_published(self):
         from api.openapi import build_openapi_spec
 
-        with self.settings(ALLOWED_HOSTS=["localhost", "127.0.0.1", ".railway.app",
+        with self.settings(PUBLIC_API_BASE_URL="",
+                           ALLOWED_HOSTS=["localhost", "127.0.0.1", ".railway.app",
                                           "api.example.com"]):
             urls = [s["url"] for s in build_openapi_spec(base_url="")["servers"]]
 
         self.assertEqual(urls, ["https://api.example.com"])
 
-    @override_settings(ALLOWED_HOSTS=["localhost", "127.0.0.1"])
+    @override_settings(ALLOWED_HOSTS=["localhost", "127.0.0.1"], PUBLIC_API_BASE_URL="")
     def test_falls_back_to_relative_server(self):
         from api.openapi import build_openapi_spec
 
@@ -2338,7 +2369,7 @@ class SimpleResponseFormatTests(TestCase):
         self.assertEqual(
             set(body),
             {"answer", "sources", "has_evidence", "notice",
-             "conversation_id", "request_id"},
+             "conversation_id", "sources_reused", "request_id"},
         )
 
     def test_contains_no_labels_or_internal_status(self):
@@ -2810,7 +2841,7 @@ class AccessRequestContactTests(TestCase):
     def test_no_contact_details_are_invented(self):
         info = self._info()
 
-        self.assertEqual(info["contact"], {"name": "Healthify"})
+        self.assertEqual(info["contact"], {"name": "ragai"})
         self.assertNotIn("## Contact", info["description"])
 
     @override_settings(API_CONTACT_EMAIL="api@example.com", API_CONTACT_URL="")
@@ -4119,3 +4150,946 @@ class RetryUsesTranslatedTermsTests(TestCase):
         self.assertEqual(fetch.call_count, 2)
         retry_terms = fetch.call_args_list[1].kwargs.get("extra_terms") or []
         self.assertIn("scabies", [t.lower() for t in retry_terms])
+
+
+class AcquisitionLatencyTests(TestCase):
+    """
+    Pengambilan otomatis berjalan di dalam permintaan pengguna. Setiap detik
+    yang dihabiskan di sini adalah detik yang ditunggu orang di depan layar.
+    """
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        try:
+            cache.clear()
+        except Exception:
+            pass
+
+    def test_embedding_does_not_block_the_request(self):
+        """
+        Satu embedding memakan lebih dari satu detik. Mengerjakan puluhan di
+        dalam permintaan menambahkan hampir setengah menit ke waktu tunggu.
+        """
+        import time
+
+        from api.intelligence.retrieval import acquisition
+        from api.models import JournalArticle
+
+        JournalArticle.objects.create(title="Belum ter-embed", doi="10.1/a",
+                                      abstract="x" * 300, is_embedded=False)
+
+        def slow_embed(article):
+            time.sleep(0.4)
+
+        with patch("api.views.embed_journal_article", side_effect=slow_embed):
+            started = time.monotonic()
+            acquisition._embed_new_articles()
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 0.2,
+                        f"pemanggil ikut menunggu embedding: {elapsed:.2f}s")
+
+    def test_covered_topic_does_not_trigger_a_fetch(self):
+        """
+        Kata Indonesia biasa seperti "menular" tidak boleh membuat pertanyaan
+        yang sudah terjawab lengkap dinilai belum terwakili.
+        """
+        from api.intelligence.contracts import EvidenceItem
+        from api.intelligence.retrieval.acquisition import coverage_is_thin
+
+        evidence = [EvidenceItem(title="Typhoid fever transmission and control",
+                                 doi="10.1/a", url="", snippet="", publisher="J")]
+
+        self.assertFalse(coverage_is_thin("apakah tifus menular lewat makanan", evidence))
+
+    def test_unknown_disease_still_triggers_a_fetch(self):
+        from api.intelligence.contracts import EvidenceItem
+        from api.intelligence.retrieval.acquisition import coverage_is_thin
+
+        evidence = [EvidenceItem(title="Antibiotic treatment of bacterial skin infection",
+                                 doi="10.1/a", url="", snippet="", publisher="J")]
+
+        self.assertTrue(coverage_is_thin("skabies menular lewat sentuhan kulit", evidence))
+
+    def test_known_disease_absent_from_evidence_triggers_a_fetch(self):
+        from api.intelligence.contracts import EvidenceItem
+        from api.intelligence.retrieval.acquisition import coverage_is_thin
+
+        evidence = [EvidenceItem(title="Hypertension and lifestyle change",
+                                 doi="10.1/a", url="", snippet="", publisher="J")]
+
+        self.assertTrue(coverage_is_thin("apakah tifus menular lewat makanan", evidence))
+
+    def test_duplicates_are_filtered_with_one_query(self):
+        """
+        Satu query untuk seluruh DOI, bukan satu query per artikel.
+        """
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from api.intelligence.retrieval import acquisition
+        from api.models import JournalArticle
+
+        JournalArticle.objects.create(title="Ada", doi="10.1/a", abstract="x" * 300)
+        items = [{"type": "journal-article", "DOI": f"10.1/{c}",
+                  "title": ["T"], "abstract": "x" * 300} for c in "abcd"]
+
+        with patch.object(acquisition, "search_crossref", return_value=items), \
+             patch("api.views.translate_text", return_value="typhoid fever"), \
+             patch.object(acquisition.lv, "resolve_doi",
+                          return_value=acquisition.lv.STATUS_VERIFIED), \
+             patch.object(acquisition, "_embed_new_articles"), \
+             CaptureQueriesContext(connection) as queries:
+            created = acquisition.ensure_coverage("apakah tifus menular", health_checked=True)
+
+        self.assertEqual(created, 3)
+        selects = [q for q in queries.captured_queries
+                   if q["sql"].lower().startswith("select") and "journalarticle" in q["sql"].lower()]
+        self.assertLessEqual(len(selects), 2, f"terlalu banyak query: {len(selects)}")
+
+
+class LinkValidationLatencyTests(TestCase):
+    """
+    Setiap referensi butuh sampai dua perjalanan jaringan. Dikerjakan
+    berurutan, delapan referensi menjadi sekitar tiga detik yang seluruhnya
+    ditanggung orang yang sedang menunggu jawaban.
+    """
+
+    def _items(self, count):
+        from api.intelligence.contracts import EvidenceItem
+
+        return [EvidenceItem(title=f"Paper {i}", doi=f"10.1000/{i}", url="",
+                             snippet="", publisher="J") for i in range(count)]
+
+    def test_validation_runs_concurrently(self):
+        import time
+
+        from api.intelligence.evidence import selector
+        from api.intelligence.evidence import link_validator as lv
+
+        def slow_validate(doi, url, timeout=5.0, trust_on_unknown=False):
+            time.sleep(0.25)
+            return {"doi": doi, "url": url, "doi_verified": True,
+                    "link_status": lv.STATUS_VERIFIED}
+
+        with patch.object(selector.lv, "validate_reference", side_effect=slow_validate), \
+             patch.object(selector, "_apply_registry_metadata"):
+            started = time.monotonic()
+            selector.validate_links(self._items(8))
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1.0,
+                        f"validasi masih berurutan: {elapsed:.2f}s untuk 8 referensi")
+
+    def test_every_item_is_still_validated(self):
+        from api.intelligence.evidence import selector
+        from api.intelligence.evidence import link_validator as lv
+
+        with patch.object(selector.lv, "validate_reference",
+                          return_value={"doi": "10.1/x", "url": "u", "doi_verified": True,
+                                        "link_status": lv.STATUS_VERIFIED}) as check, \
+             patch.object(selector, "_apply_registry_metadata"):
+            out = selector.validate_links(self._items(5))
+
+        self.assertEqual(check.call_count, 5)
+        self.assertEqual(len(out), 5)
+        self.assertTrue(all(i.doi_verified for i in out))
+
+    def test_one_broken_item_does_not_sink_the_rest(self):
+        from api.intelligence.evidence import selector
+        from api.intelligence.evidence import link_validator as lv
+
+        calls = {"n": 0}
+
+        def flaky(doi, url, timeout=5.0, trust_on_unknown=False):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("jaringan putus")
+            return {"doi": doi, "url": url, "doi_verified": True,
+                    "link_status": lv.STATUS_VERIFIED}
+
+        with patch.object(selector.lv, "validate_reference", side_effect=flaky), \
+             patch.object(selector, "_apply_registry_metadata"):
+            out = selector.validate_links(self._items(4))
+
+        self.assertEqual(len(out), 4)
+        self.assertEqual(sum(1 for i in out if i.doi_verified), 3)
+
+
+class ConversationIdentityTests(TestCase):
+    """
+    Pengenal ruang obrolan dibuat oleh produk lain. Sistem ini tidak boleh
+    menuntut pendaftaran lebih dulu, dan tidak boleh mencampur percakapan milik
+    dua produk yang kebetulan memakai pengenal yang sama.
+    """
+
+    def _payload(self, query, **context):
+        return {"query": query, "context": context}
+
+    def test_any_identifier_works_without_registration(self):
+        from api.intelligence import engine
+        from api.models import ConversationSession
+
+        with patch.object(engine, "retrieve_candidates", return_value=[]):
+            response = engine.process(
+                self._payload("apakah demam berbahaya", conversation_id="room-abc-123"))
+
+        self.assertEqual(response.conversation_id, "room-abc-123")
+        self.assertEqual(ConversationSession.objects.count(), 1)
+
+    def test_common_field_names_are_accepted(self):
+        """Tiap produk menamai ruang obrolannya berbeda."""
+        from api.intelligence.contracts import IntelligenceRequest
+
+        for field in ("conversation_id", "session_id", "room_id", "thread_id", "chat_id"):
+            request = IntelligenceRequest.from_payload(
+                {"query": "x", "context": {field: "r-1"}})
+            self.assertEqual(request.conversation_id, "r-1", f"gagal untuk {field}")
+
+    def test_two_products_do_not_share_a_room(self):
+        """
+        Dua produk bisa sama-sama memakai "room-1" tanpa saling tahu. Riwayat
+        salah satu tidak boleh terbaca oleh yang lain.
+        """
+        from api.intelligence import engine
+
+        with patch.object(engine, "retrieve_candidates", return_value=[]):
+            engine.process(self._payload("saya demam", conversation_id="room-1"),
+                           consumer="produk-a")
+            engine.process(self._payload("saya batuk", conversation_id="room-1"),
+                           consumer="produk-b")
+
+        from api.intelligence.context.conversation import load_state
+
+        a = load_state("room-1", consumer="produk-a")
+        b = load_state("room-1", consumer="produk-b")
+
+        self.assertIn("saya demam", " ".join(a.user_messages()))
+        self.assertNotIn("saya batuk", " ".join(a.user_messages()))
+        self.assertIn("saya batuk", " ".join(b.user_messages()))
+        self.assertNotIn("saya demam", " ".join(b.user_messages()))
+
+    def test_existing_sessions_keep_working(self):
+        """Sesi yang sudah berjalan tidak boleh terputus oleh pemisahan ini."""
+        from api.intelligence.context.conversation import load_state
+        from api.models import ConversationMessage, ConversationSession
+
+        legacy = ConversationSession.objects.create(session_id="room-lama",
+                                                    consumer="healthtalk")
+        ConversationMessage.objects.create(session=legacy, role="user",
+                                           content="pertanyaan lama")
+
+        state = load_state("room-lama", consumer="healthtalk")
+
+        self.assertIn("pertanyaan lama", " ".join(state.user_messages()))
+
+
+class ConversationEvidenceTests(TestCase):
+    """
+    Satu pembahasan di ruang obrolan harus bersandar pada jurnal yang sama.
+    Mengulang pencarian pada tiap gelembung membuat rujukan berganti-ganti dan
+    jawaban tampak berubah pendirian untuk pembahasan yang sama.
+    """
+
+    def setUp(self):
+        from api.models import JournalArticle
+
+        import datetime
+
+        # Menyerupai baris nyata: DOI penerbit yang dikenal dan tahun terbit,
+        # supaya pengujian menguji alur percakapan dan bukan tersandung skor
+        # kualitas metadata.
+        self.journal = JournalArticle.objects.create(
+            title="Dengue fever transmission by Aedes mosquitoes",
+            abstract="Dengue fever is transmitted by Aedes mosquito bites. " * 12,
+            doi="10.1016/j.dengue.2021.01.001",
+            url="https://doi.org/10.1016/j.dengue.2021.01.001",
+            publisher="Elsevier", journal_name="Journal of Tropical Medicine",
+            published_date=datetime.date(2021, 6, 1), is_embedded=False,
+        )
+
+    def _item(self):
+        from api.intelligence.contracts import EvidenceItem, EvidenceOrigin
+
+        return EvidenceItem(
+            chunk_id=f"journal:{self.journal.id}",
+            source_id=f"journal:{self.journal.id}",
+            title=self.journal.title, snippet=self.journal.abstract[:400],
+            doi=self.journal.doi, url=self.journal.url,
+            publisher=self.journal.publisher,
+            origin=EvidenceOrigin.KNOWLEDGE_BASE,
+            # Skor setara hasil retrieval sungguhan; tanpa ini item contoh
+            # tersaring ambang relevansi dan pengujian menguji hal lain.
+            semantic_relevance=0.8, aspect_match=1.0, source_quality=0.8,
+        )
+
+    def _no_network(self):
+        """DOI contoh tidak terdaftar di registry mana pun."""
+        from api.intelligence.evidence import link_validator as lv
+
+        return (patch.object(lv, "resolve_doi", return_value=lv.STATUS_VERIFIED),
+                patch.object(lv, "fetch_doi_metadata", return_value=None))
+
+    def test_first_question_always_searches(self):
+        from api.intelligence import engine
+
+        doi_ok, meta_ok = self._no_network()
+        with doi_ok, meta_ok, patch.object(
+                engine, "retrieve_candidates", return_value=[self._item()]) as search:
+            response = engine.process(
+                {"query": "apakah demam berdarah ditularkan nyamuk",
+                 "context": {"conversation_id": "room-dbd"}})
+
+        search.assert_called()
+        self.assertEqual((response.metadata or {}).get("evidence_source"), "retrieval")
+
+    def test_follow_up_within_the_same_journals_reuses_them(self):
+        from api.intelligence import engine
+
+        doi_ok, meta_ok = self._no_network()
+        with doi_ok, meta_ok, patch.object(
+                engine, "retrieve_candidates", return_value=[self._item()]):
+            engine.process({"query": "apakah demam berdarah ditularkan nyamuk",
+                            "context": {"conversation_id": "room-dbd"}})
+
+        with patch.object(engine, "retrieve_candidates") as search:
+            response = engine.process(
+                {"query": "nyamuk apa yang menularkan demam berdarah",
+                 "context": {"conversation_id": "room-dbd"}})
+
+        search.assert_not_called()
+        self.assertEqual((response.metadata or {}).get("evidence_source"), "conversation")
+        self.assertTrue(response.evidence)
+
+    def test_question_beyond_the_journals_searches_again(self):
+        from api.intelligence import engine
+
+        doi_ok, meta_ok = self._no_network()
+        with doi_ok, meta_ok, patch.object(
+                engine, "retrieve_candidates", return_value=[self._item()]):
+            engine.process({"query": "apakah demam berdarah ditularkan nyamuk",
+                            "context": {"conversation_id": "room-dbd"}})
+
+        with patch.object(engine, "retrieve_candidates", return_value=[]) as search:
+            response = engine.process(
+                {"query": "apakah asam urat boleh makan emping",
+                 "context": {"conversation_id": "room-dbd"}})
+
+        search.assert_called()
+        self.assertEqual((response.metadata or {}).get("evidence_source"), "retrieval")
+
+    def test_a_room_without_history_never_reuses(self):
+        from api.intelligence import engine
+
+        doi_ok, meta_ok = self._no_network()
+        with doi_ok, meta_ok, patch.object(
+                engine, "retrieve_candidates", return_value=[self._item()]) as search:
+            engine.process({"query": "apakah demam berdarah ditularkan nyamuk",
+                            "context": {"conversation_id": "room-baru"}})
+
+        search.assert_called()
+
+    def test_consumer_sees_whether_sources_were_reused(self):
+        from api.intelligence import engine
+        from api.intelligence.adapters.healthtalk import to_simple_response
+
+        doi_ok, meta_ok = self._no_network()
+        with doi_ok, meta_ok, patch.object(
+                engine, "retrieve_candidates", return_value=[self._item()]):
+            first = engine.process({"query": "apakah demam berdarah ditularkan nyamuk",
+                                    "context": {"conversation_id": "room-dbd"}})
+        with patch.object(engine, "retrieve_candidates"):
+            second = engine.process({"query": "nyamuk apa penyebab demam berdarah",
+                                     "context": {"conversation_id": "room-dbd"}})
+
+        self.assertFalse(to_simple_response(first)["sources_reused"])
+        self.assertTrue(to_simple_response(second)["sources_reused"])
+
+    def test_reused_evidence_keeps_the_same_references(self):
+        """Rujukan yang ditampilkan harus persis sama, bukan sekadar mirip."""
+        from api.intelligence import engine
+
+        doi_ok, meta_ok = self._no_network()
+        with doi_ok, meta_ok, patch.object(
+                engine, "retrieve_candidates", return_value=[self._item()]):
+            first = engine.process({"query": "apakah demam berdarah ditularkan nyamuk",
+                                    "context": {"conversation_id": "room-dbd"}})
+        with patch.object(engine, "retrieve_candidates"):
+            second = engine.process({"query": "nyamuk apa penyebab demam berdarah",
+                                     "context": {"conversation_id": "room-dbd"}})
+
+        self.assertEqual([e.doi for e in first.evidence],
+                         [e.doi for e in second.evidence])
+
+
+class ConversationDocumentationTests(TestCase):
+    """
+    Dokumentasi adalah janji ke pengembang lain. Nama field yang mereka baca
+    harus benar-benar diterima mesin, dan sebaliknya.
+    """
+
+    def test_documented_room_fields_are_all_accepted(self):
+        from api.intelligence.contracts import IntelligenceRequest
+        from api.openapi import build_openapi_spec
+
+        described = build_openapi_spec()["info"]["description"]
+
+        for field in ("conversation_id", "session_id", "room_id",
+                      "thread_id", "chat_id"):
+            self.assertIn(f"`context.{field}`", described,
+                          f"{field} tidak disebut dokumentasi")
+            request = IntelligenceRequest.from_payload(
+                {"query": "x", "context": {field: "r-9"}})
+            self.assertEqual(request.conversation_id, "r-9")
+
+    def test_reuse_flag_is_documented_and_returned(self):
+        from api.openapi import build_openapi_spec
+
+        spec = build_openapi_spec()
+        simple = spec["components"]["schemas"]["SimpleQueryResponse"]["properties"]
+
+        self.assertIn("sources_reused", simple)
+        self.assertIn("sources_reused", spec["info"]["description"])
+
+
+class TopicShiftTests(TestCase):
+    """
+    Percakapan harus bisa berpindah pembahasan. Keputusan memakai ulang jurnal
+    dibuat dari pertanyaan ASLI pengguna; query yang sudah diperkaya konteks
+    selalu membawa topik sebelumnya, sehingga memakainya membuat ruang obrolan
+    terkunci selamanya pada jurnal pertama.
+    """
+
+    def _pool(self):
+        from api.intelligence.contracts import EvidenceItem
+
+        return [EvidenceItem(
+            title="Dengue haemorrhagic fever in Indonesia",
+            snippet="Dengue fever is transmitted by Aedes mosquitoes and causes bleeding.",
+            doi="10.1016/j.dengue.2021.01.001", url="u", publisher="Elsevier")]
+
+    def test_follow_up_in_known_vocabulary_reuses(self):
+        from api.intelligence.context.evidence_memory import can_answer_from_memory
+
+        self.assertTrue(can_answer_from_memory("apa gejalanya", self._pool()))
+        self.assertTrue(can_answer_from_memory("apa saja gejala penyakit ini",
+                                               self._pool()))
+
+    def test_unrecognised_wording_falls_back_to_searching(self):
+        """
+        Kata yang tidak dikenali kosakata kesehatan dan juga tidak muncul di
+        jurnal diperlakukan sebagai kemungkinan topik baru. Sisi ini sengaja
+        dipilih: mencari ulang hanya menambah waktu, sedangkan memakai ulang
+        jurnal yang keliru menghasilkan rujukan yang salah. Pencarian ulang pun
+        tetap membawa konteks percakapan, sehingga umumnya menemukan jurnal
+        yang sama.
+        """
+        from api.intelligence.context.evidence_memory import can_answer_from_memory
+
+        self.assertFalse(can_answer_from_memory("berapa lama sembuhnya", self._pool()))
+
+    def test_a_different_disease_ends_the_reuse(self):
+        from api.intelligence.context.evidence_memory import can_answer_from_memory
+
+        self.assertFalse(can_answer_from_memory("kalau asam urat bagaimana", self._pool()))
+
+    def test_the_same_disease_keeps_the_reuse(self):
+        from api.intelligence.context.evidence_memory import can_answer_from_memory
+
+        self.assertTrue(can_answer_from_memory("demam berdarah menular lewat apa",
+                                               self._pool()))
+
+    def test_a_disease_outside_the_lexicon_ends_the_reuse(self):
+        """
+        Leksikon selalu tertinggal. Kata tak dikenal yang juga tidak muncul di
+        jurnal diperlakukan sebagai topik baru, bukan sebagai lanjutan.
+        """
+        from api.intelligence.context.evidence_memory import can_answer_from_memory
+
+        self.assertFalse(can_answer_from_memory("kalau skabies bagaimana", self._pool()))
+
+    def test_enriched_query_would_have_locked_the_room(self):
+        """
+        Menjaga alasan perbaikan ini tetap terlihat: query yang diperkaya
+        konteks memuat topik lama, sehingga selalu dinilai masih tercakup.
+        """
+        from api.intelligence.context.evidence_memory import can_answer_from_memory
+
+        enriched = "kalau asam urat bagaimana demam berdarah pendarahan"
+
+        self.assertTrue(can_answer_from_memory(enriched, self._pool()))
+        self.assertFalse(can_answer_from_memory("kalau asam urat bagaimana", self._pool()))
+
+
+class TopicChangeDropsStaleContextTests(TestCase):
+    """
+    Mendeteksi perpindahan topik saja tidak cukup. Query untuk pencarian
+    diperkaya konteks percakapan, dan istilah topik lama menenggelamkan
+    penyakit yang baru disebut, sehingga pencarian "baru" mengembalikan jurnal
+    yang sama persis.
+    """
+
+    def _pool(self):
+        from api.intelligence.contracts import EvidenceItem
+
+        return [EvidenceItem(
+            title="Dengue haemorrhagic fever in Indonesia",
+            snippet="Dengue fever is transmitted by Aedes mosquitoes.",
+            doi="10.1016/j.dengue.2021.01.001", url="u", publisher="Elsevier")]
+
+    def test_a_new_disease_is_recognised_as_a_topic_change(self):
+        from api.intelligence.context.evidence_memory import topic_changed
+
+        self.assertTrue(topic_changed("kalau asam urat bagaimana", self._pool()))
+
+    def test_a_follow_up_is_not_a_topic_change(self):
+        from api.intelligence.context.evidence_memory import topic_changed
+
+        self.assertFalse(topic_changed("apa gejalanya", self._pool()))
+        self.assertFalse(topic_changed("demam berdarah menular lewat apa", self._pool()))
+
+    def test_search_uses_the_bare_question_after_a_topic_change(self):
+        from api.intelligence import engine
+        from api.models import JournalArticle
+
+        JournalArticle.objects.create(
+            title="Dengue haemorrhagic fever in Indonesia",
+            abstract="Dengue fever is transmitted by Aedes mosquitoes. " * 12,
+            doi="10.1016/j.dengue.2021.01.001", url="u", publisher="Elsevier")
+
+        with patch.object(engine, "recent_evidence", return_value=self._pool()), \
+             patch.object(engine, "retrieve_candidates", return_value=[]) as search:
+            engine.process({"query": "kalau asam urat bagaimana",
+                            "context": {"conversation_id": "room-x"}})
+
+        asked = search.call_args_list[0].args[0]
+        self.assertEqual(asked, "kalau asam urat bagaimana")
+        self.assertNotIn("berdarah", asked.lower())
+
+
+class MemoryOrderingTests(TestCase):
+    """
+    Ingatan percakapan harus mengikuti pembahasan yang sedang berjalan. Membaca
+    giliran terlama membuat lanjutan sesudah perpindahan topik kembali memakai
+    jurnal topik yang sudah ditinggalkan.
+    """
+
+    def test_most_recent_turn_leads_the_pool(self):
+        import json
+
+        from api.intelligence.context.evidence_memory import recent_evidence
+        from api.models import (ConversationMessage, ConversationSession,
+                                JournalArticle)
+
+        old_topic = JournalArticle.objects.create(
+            title="Dengue haemorrhagic fever", abstract="x" * 300, doi="10.1/a")
+        new_topic = JournalArticle.objects.create(
+            title="Gout and purine diet", abstract="y" * 300, doi="10.1/b")
+
+        session = ConversationSession.objects.create(session_id="s", consumer="c")
+        for journal in (old_topic, new_topic):
+            ConversationMessage.objects.create(
+                session=session, role="assistant", content="jawaban",
+                evidence_refs=json.dumps([{"source_id": f"journal:{journal.id}"}]))
+
+        pool = recent_evidence(session)
+
+        self.assertEqual(pool[0].title, "Gout and purine diet")
+
+
+class ContextFollowsTheTopicTests(TestCase):
+    """
+    Konteks kesehatan akumulatif berguna selama satu pembahasan. Setelah
+    pengguna berpindah penyakit, akumulasi itu justru menarik jurnal topik lama
+    ke setiap giliran berikutnya.
+    """
+
+    def _pool(self):
+        from api.intelligence.contracts import EvidenceItem
+
+        return [EvidenceItem(
+            title="Dengue haemorrhagic fever in Indonesia",
+            snippet="Dengue fever with bleeding and fever.",
+            doi="10.1016/j.dengue.2021.01.001", url="u", publisher="Elsevier")]
+
+    def setUp(self):
+        from api.intelligence.context.conversation import storage_key
+        from api.models import ConversationSession
+
+        # Ingatan hanya terbaca bila ruang obrolan sudah punya baris sesi.
+        for room in ("room-y", "room-z"):
+            ConversationSession.objects.create(
+                session_id=storage_key("healthify", room), consumer="healthify")
+
+    def test_context_restarts_when_the_disease_changes(self):
+        from api.intelligence import engine
+
+        with patch.object(engine, "recent_evidence", return_value=self._pool()), \
+             patch.object(engine, "retrieve_candidates", return_value=[]):
+            response = engine.process(
+                {"query": "kalau asam urat bagaimana",
+                 "context": {"conversation_id": "room-y",
+                             "previous_messages": [
+                                 {"role": "user", "content": "saya demam dan pendarahan"}]}})
+
+        symptoms = " ".join(response.health_context.symptoms).lower()
+        self.assertNotIn("pendarahan", symptoms)
+
+    def test_context_still_accumulates_within_one_topic(self):
+        from api.intelligence import engine
+
+        with patch.object(engine, "recent_evidence", return_value=self._pool()), \
+             patch.object(engine, "retrieve_candidates", return_value=[]):
+            response = engine.process(
+                {"query": "sudah tiga hari",
+                 "context": {"conversation_id": "room-z",
+                             "previous_messages": [
+                                 {"role": "user", "content": "saya demam"}]}})
+
+        self.assertEqual(response.health_context.duration, "3 hari")
+        self.assertIn("demam", " ".join(response.health_context.symptoms).lower())
+
+
+class EmptySnapshotIsNotAMissingSnapshotTests(TestCase):
+    """
+    Konteks yang sengaja dikosongkan saat pembahasan berpindah tidak boleh
+    dibangun ulang dari riwayat: membangunnya ulang mengembalikan penyakit yang
+    baru saja ditinggalkan, dan giliran berikutnya kembali menarik jurnal lama.
+    """
+
+    def test_stored_empty_context_is_kept(self):
+        import json
+
+        from api.intelligence.context.conversation import load_state, storage_key
+        from api.models import ConversationMessage, ConversationSession
+
+        session = ConversationSession.objects.create(
+            session_id=storage_key("healthify", "room-q"), consumer="healthify",
+            health_context=json.dumps({"symptoms": [], "chief_complaint": None}))
+        ConversationMessage.objects.create(session=session, role="user",
+                                           content="saya demam dan pendarahan")
+
+        state = load_state("room-q", consumer="healthify")
+
+        self.assertTrue(state.has_snapshot)
+        self.assertTrue(state.health_context.is_empty())
+
+    def test_history_still_rebuilds_when_no_snapshot_exists(self):
+        """Consumer yang mengirim riwayat sendiri tetap mendapat konteksnya."""
+        from api.intelligence.context.conversation import (
+            load_state, rebuild_context_from_history)
+
+        state = load_state(None, previous_messages=[
+            {"role": "user", "content": "saya demam tiga hari"}])
+
+        self.assertFalse(state.has_snapshot)
+        self.assertIn("demam", " ".join(
+            rebuild_context_from_history(state).symptoms).lower())
+
+
+class AccessRequestNotificationTests(TestCase):
+    """
+    Permintaan akses tidak berguna bila tidak ada yang tahu permintaan itu
+    masuk. Sebaliknya, kegagalan mengirim surat tidak boleh membatalkan
+    permintaan yang sudah tersimpan.
+    """
+
+    URL = "/api/v1/intelligence/access-request"
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        try:
+            cache.clear()
+        except Exception:
+            pass
+
+    def _submit(self):
+        return self.client.post(self.URL, data=json.dumps({
+            "name": "Dev", "email": "dev@example.com",
+            "use_case": "Chatbot kesehatan.", "organization": "Contoh",
+        }), content_type="application/json")
+
+    def test_operator_is_notified(self):
+        from api import email_service as service
+
+        with patch.object(service.email_service, "notify_admin_access_request") as notify:
+            response = self._submit()
+
+        self.assertEqual(response.status_code, 201)
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.args[0].email, "dev@example.com")
+
+    def test_a_failing_mailbox_does_not_lose_the_request(self):
+        from api import email_service as service
+        from api.models import ApiAccessRequest
+
+        with patch.object(service.email_service, "notify_admin_access_request",
+                          side_effect=OSError("smtp mati")):
+            response = self._submit()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(ApiAccessRequest.objects.count(), 1)
+
+    def test_notification_carries_the_request_details(self):
+        from django.core import mail
+
+        from api.email_service import email_service
+        from api.models import ApiAccessRequest
+
+        access_request = ApiAccessRequest.objects.create(
+            name="Dev", email="dev@example.com", use_case="Chatbot kesehatan.",
+            organization="Contoh", expected_volume="2000/hari")
+
+        with self.settings(ADMIN_NOTIFICATION_EMAILS=["ops@example.com"],
+                           ENABLE_EMAIL_NOTIFICATIONS=True,
+                           EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            email_service.admin_emails = ["ops@example.com"]
+            email_service.enabled = True
+            sent = email_service.notify_admin_access_request(access_request)
+
+        self.assertTrue(sent)
+        self.assertEqual(len(mail.outbox), 1)
+        body = mail.outbox[0].body
+        self.assertIn("dev@example.com", body)
+        self.assertIn("Chatbot kesehatan.", body)
+        self.assertIn(f"--request {access_request.id}", body)
+
+
+class ApiKeyDeliveryTests(TestCase):
+    """
+    Nilai asli kunci hanya pernah ada di terminal operator dan di surat ini.
+    Karena itu kegagalan pengiriman harus terlihat, bukan ditelan diam-diam.
+    """
+
+    def _issue(self, **kwargs):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("issue_api_key", stdout=out, **kwargs)
+        return out.getvalue()
+
+    def test_key_is_emailed_to_the_requester(self):
+        from django.core import mail
+
+        from api.email_service import email_service
+        from api.models import ApiAccessRequest
+
+        access_request = ApiAccessRequest.objects.create(
+            name="Dev", email="dev@example.com", use_case="Chatbot.")
+
+        with self.settings(ENABLE_EMAIL_NOTIFICATIONS=True,
+                           EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+                           PUBLIC_API_BASE_URL="https://ragai.example.com"):
+            email_service.enabled = True
+            output = self._issue(consumer="healthtalk", request=access_request.id,
+                                 email=True)
+
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, ["dev@example.com"])
+
+        raw_key = next(line.strip() for line in output.splitlines()
+                       if line.strip().startswith("ht_live_"))
+        self.assertIn(raw_key, message.body)
+        self.assertIn("https://ragai.example.com/docs", message.body)
+
+    def test_delivery_failure_is_reported_loudly(self):
+        from api import email_service as service
+        from api.models import ApiAccessRequest
+
+        access_request = ApiAccessRequest.objects.create(
+            name="Dev", email="dev@example.com", use_case="Chatbot.")
+
+        with patch.object(service.email_service, "send_api_key", return_value=False):
+            output = self._issue(consumer="healthtalk", request=access_request.id,
+                                 email=True)
+
+        self.assertIn("GAGAL", output)
+
+    def test_nothing_is_sent_without_the_flag(self):
+        from api import email_service as service
+        from api.models import ApiAccessRequest
+
+        access_request = ApiAccessRequest.objects.create(
+            name="Dev", email="dev@example.com", use_case="Chatbot.")
+
+        with patch.object(service.email_service, "send_api_key") as send:
+            self._issue(consumer="healthtalk", request=access_request.id)
+
+        send.assert_not_called()
+
+
+class PublicSiteTests(TestCase):
+    """
+    Engine publik punya domain dan identitasnya sendiri; produk Healthify tetap
+    di domainnya. Yang diuji di sini adalah bahwa keduanya tidak tertukar.
+    """
+
+    def test_landing_page_introduces_the_engine(self):
+        page = self.client.get("/").content.decode()
+
+        self.assertIn("ragai", page)
+        self.assertIn("Request API access", page)
+        self.assertIn("/docs", page)
+
+    def test_landing_page_states_the_beta_terms(self):
+        page = self.client.get("/").content.decode().lower()
+
+        self.assertIn("beta", page)
+        self.assertIn("free", page)
+
+    def test_landing_page_carries_the_request_form(self):
+        page = self.client.get("/").content.decode()
+
+        self.assertIn("/api/v1/intelligence/access-request", page)
+        self.assertIn('name="use_case"', page)
+
+    def test_documentation_points_at_the_public_address(self):
+        from api.openapi import build_openapi_spec
+
+        with self.settings(PUBLIC_API_BASE_URL="https://ragai.example.com"):
+            spec = build_openapi_spec()
+
+        self.assertEqual(spec["servers"][0]["url"], "https://ragai.example.com")
+        self.assertNotIn("healthify.twenti.studio", json.dumps(spec))
+
+    def test_documentation_declares_the_beta_status(self):
+        from api.openapi import build_openapi_spec
+
+        description = build_openapi_spec()["info"]["description"].lower()
+
+        self.assertIn("beta", description)
+        self.assertIn("free", description)
+
+
+class SmallTalkTests(TestCase):
+    """
+    Di ruang obrolan, sebagian pesan bukan pertanyaan: sapaan, ucapan terima
+    kasih, penutup. Terlihat di log produksi bahwa "terima kasih banyak"
+    menempuh pencarian literatur lengkap selama hampir tiga detik dan kembali
+    membawa lima jurnal yang tidak ada hubungannya dengan apa pun.
+    """
+
+    COURTESY = ["terima kasih banyak", "makasih ya", "halo", "hai dok",
+                "selamat pagi", "oke", "thanks"]
+
+    def test_courtesy_is_recognised(self):
+        from api.intelligence.contracts import Intent
+        from api.intelligence.query_understanding.classifier import classify_intent
+
+        for message in self.COURTESY:
+            self.assertEqual(classify_intent(message).intent, Intent.SMALL_TALK,
+                             f"gagal untuk {message!r}")
+
+    def test_a_greeting_with_a_complaint_is_still_a_complaint(self):
+        """
+        "halo dok, saya batuk berdahak sudah seminggu" adalah keluhan yang
+        kebetulan diawali sapaan. Keluhannya tidak boleh hilang.
+        """
+        from api.intelligence.contracts import Intent
+        from api.intelligence.query_understanding.classifier import classify_intent
+
+        for message in ("halo dok, saya batuk berdahak sudah seminggu",
+                        "selamat pagi, apakah demam berdarah menular",
+                        "terima kasih, tapi apakah asam urat boleh makan emping"):
+            self.assertNotEqual(classify_intent(message).intent, Intent.SMALL_TALK,
+                                f"salah dikira basa-basi: {message!r}")
+
+    def test_no_retrieval_and_no_sources_for_courtesy(self):
+        from api.intelligence import engine
+
+        with patch.object(engine, "retrieve_candidates") as search:
+            response = engine.process({"query": "terima kasih banyak"})
+
+        search.assert_not_called()
+        self.assertEqual(response.evidence, [])
+        self.assertTrue(response.answer.strip())
+
+    def test_the_reply_is_courteous_not_a_refusal(self):
+        """
+        Dijawab ramah, bukan dengan penolakan "di luar cakupan" yang dipakai
+        untuk pertanyaan non-kesehatan.
+        """
+        from api.intelligence import engine
+
+        with patch.object(engine, "retrieve_candidates"):
+            thanks = engine.process({"query": "terima kasih banyak"}).answer.lower()
+            greeting = engine.process({"query": "halo"}).answer.lower()
+
+        self.assertNotIn("di luar cakupan", thanks)
+        self.assertIn("sama-sama", thanks)
+        self.assertIn("halo", greeting)
+
+    def test_courtesy_does_not_trigger_knowledge_acquisition(self):
+        from api.intelligence import engine
+
+        with patch.object(engine, "ensure_coverage") as fill, \
+             patch.object(engine, "retrieve_candidates"):
+            engine.process({"query": "makasih ya"})
+
+        fill.assert_not_called()
+
+
+class CitationMarkersNeverReachReadersTests(TestCase):
+    """
+    Penanda `[E1]` adalah notasi internal untuk menelusuri kalimat ke bukti.
+    Di layar ia hanya tampak sebagai angka dalam kurung yang tidak berarti bagi
+    pembaca, dan itu terjadi di produksi: jawaban format penuh dan ringkasan
+    verifikasi sama-sama masih memuatnya.
+    """
+
+    ANSWER = "Demam berdarah ditularkan nyamuk Aedes. [E1] Gejalanya demam tinggi. [E2]"
+
+    def _response(self):
+        from api.intelligence.contracts import (
+            EvidenceStatus, HealthContext, IntelligenceResponse, Intent, Mode,
+            SafetyDecision)
+
+        return IntelligenceResponse(
+            answer=self.ANSWER, intent=Intent.HEALTH_INFORMATION, mode=Mode.INFORMATION,
+            health_context=HealthContext(), evidence=[], claims=[],
+            evidence_status=EvidenceStatus.SUFFICIENT, safety_decision=SafetyDecision.PASS,
+            safety_flags=[], metadata={},
+        )
+
+    def test_full_format_answer_is_clean(self):
+        from api.intelligence.adapters.healthtalk import to_consumer_response
+
+        body = to_consumer_response(self._response())
+
+        self.assertNotIn("[E1]", body["answer"])
+        self.assertNotIn("[E2]", body["answer"])
+        self.assertIn("nyamuk Aedes.", body["answer"])
+
+    def test_annotated_version_is_still_available(self):
+        """Yang butuh pemetaan kalimat ke bukti tidak kehilangan apa pun."""
+        from api.intelligence.adapters.healthtalk import to_consumer_response
+
+        body = to_consumer_response(self._response())
+
+        self.assertIn("[E1]", body["answer_annotated"])
+
+    def test_simple_format_stays_clean(self):
+        from api.intelligence.adapters.healthtalk import to_simple_response
+
+        self.assertNotIn("[E", to_simple_response(self._response())["answer"])
+
+    def test_no_space_is_left_before_punctuation(self):
+        from api.intelligence.citations import strip_citation_markers
+
+        self.assertEqual(strip_citation_markers("Benar [E1]. Lalu [E2], juga."),
+                         "Benar. Lalu, juga.")
+
+    def test_verification_summary_is_clean(self):
+        from api.ai_adapter import normalize_ai_response
+
+        result = normalize_ai_response(
+            {"label": "valid", "confidence": 0.9,
+             "summary": "Merokok menyebabkan kanker paru. [E1] [E2]", "sources": []},
+            claim_text="merokok menyebabkan kanker paru")
+
+        self.assertNotIn("[E", result["summary"])

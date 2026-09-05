@@ -132,7 +132,8 @@ def is_health_related_claim(claim_text: str, summary: str = "") -> bool:
     # LOWER threshold - lebih permissive
     is_health = total_matches >= 1  # Changed from 2 to 1
     
-    logger.info(f"[HEALTH_CHECK] Keywords: {keyword_matches}, Patterns: {pattern_matches}, Is Health: {is_health}")
+    logger.debug("[HEALTH_CHECK] kata kunci=%s pola=%s -> kesehatan=%s",
+                 keyword_matches, pattern_matches, is_health)
     
     return is_health
 
@@ -156,8 +157,9 @@ def determine_verification_label(confidence_score: float, has_sources: bool = Tr
     # Check if health-related
     is_health = is_health_related_claim(claim_text, summary)
 
-    logger.info(
-        f"[LABEL] Confidence: {c:.2f}, Has sources: {has_sources}, Has journal: {has_journal}, Is health: {is_health}"
+    logger.debug(
+        "[LABEL] confidence=%.2f sumber=%s jurnal=%s kesehatan=%s",
+        c, has_sources, has_journal, is_health,
     )
 
     # RULE A: Jika BUKAN klaim kesehatan ATAU tidak ada jurnal terkait -> UNVERIFIED
@@ -282,6 +284,13 @@ def normalize_ai_response(ai_result: Dict[str, Any], claim_text: str = "") -> Di
         # IMPORTANT: Jika label unverified, set confidence ke None
         final_confidence = confidence if final_label != 'unverified' else None
     
+    # Penanda sitasi dibuang dari teks yang akan dibaca pengguna. Ia notasi
+    # internal, dan di layar hanya tampak sebagai angka dalam kurung yang tidak
+    # berarti apa-apa; daftar referensi disajikan terpisah di bawah jawaban.
+    from .intelligence.citations import strip_citation_markers
+
+    combined_summary = strip_citation_markers(combined_summary)
+
     # Label UNVERIFIED berarti sistem tidak dapat menyimpulkan apa pun. Tetap
     # melampirkan daftar sumber membantah label itu sendiri: pembaca melihat
     # referensi seolah klaimnya tertelusur, padahal justru sebaliknya.
@@ -931,7 +940,12 @@ Abstrak/Konten:
     except Exception as e:
         logger.error(f"[VERIFY_WITH_EVIDENCE] Error: {e}")
         raise
-logger.info(f"  Exists: {VERIFY_SCRIPT.exists()}")
-logger.info(f"  Timeout: {VERIFICATION_TIMEOUT}s")
-logger.info(f"  Max Retries: {MAX_RETRIES}")
-logger.info("="*80)
+# Ringkasan konfigurasi saat modul dimuat. Ditulis pada level DEBUG: isinya
+# tidak berubah selama proses hidup, tetapi dicetak ulang oleh setiap worker
+# pada setiap deploy, dan garis "=" sepanjang delapan puluh karakter membuat
+# log sulit dibaca tanpa memberi tahu apa pun yang tidak dapat dilihat dari
+# konfigurasi.
+logger.debug(
+    "[VERIFY] skrip=%s ada=%s timeout=%ss retry=%s",
+    VERIFY_SCRIPT, VERIFY_SCRIPT.exists(), VERIFICATION_TIMEOUT, MAX_RETRIES,
+)

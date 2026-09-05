@@ -24,6 +24,11 @@ class Intent(str, Enum):
     FOLLOW_UP = "FOLLOW_UP"
     MEDICATION_INFORMATION = "MEDICATION_INFORMATION"
     GENERAL_HEALTH = "GENERAL_HEALTH"
+    # Sapaan, ucapan terima kasih, dan penutup percakapan. Dipisahkan dari
+    # UNSUPPORTED karena maknanya berbeda: pesan seperti ini bukan pertanyaan
+    # di luar cakupan, melainkan basa-basi yang wajar di ruang obrolan dan
+    # pantas dijawab ramah — bukan dijawab dengan lima jurnal.
+    SMALL_TALK = "SMALL_TALK"
     UNSUPPORTED = "UNSUPPORTED"
 
 
@@ -312,8 +317,18 @@ class IntelligenceRequest:
         return cls(
             query=_clean(payload.get("query") or payload.get("text") or payload.get("message")),
             mode=Mode.coerce(payload.get("mode")),
+            # Pengenal ruang obrolan datang dari produk lain, dan tiap produk
+            # menamainya berbeda. Menerima beberapa nama membuat konsumen tidak
+            # perlu menyesuaikan skema datanya hanya untuk memanggil API ini;
+            # nilai apa pun yang mereka sudah punya bisa langsung dipakai.
             conversation_id=_clean(
-                context.get("conversation_id") or context.get("session_id")
+                context.get("conversation_id")
+                or context.get("session_id")
+                or context.get("room_id")
+                or context.get("thread_id")
+                or context.get("chat_id")
+                or payload.get("conversation_id")
+                or payload.get("session_id")
             ) or None,
             previous_messages=messages,
             health_context=context.get("health_context") or {},

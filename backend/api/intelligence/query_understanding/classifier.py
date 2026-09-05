@@ -152,6 +152,44 @@ def is_out_of_scope(text: str) -> bool:
     return bool(out_hits) and not is_health_related(low)
 
 
+# Basa-basi percakapan: sapaan, ucapan terima kasih, dan penutup. Dikenali
+# hanya bila pesannya memang hanya itu — "halo dok, saya batuk seminggu" tetap
+# laporan gejala, bukan sapaan.
+_SMALL_TALK_PATTERNS = [
+    re.compile(r"^\W*(terima\s*kasih|makasih|makasi|thanks|thank\s*you|thx|tengkyu)\b"),
+    re.compile(r"^\W*(halo|hai|hi|hello|hey)\b"),
+    re.compile(r"^\W*selamat\s+(pagi|siang|sore|malam)\b"),
+    re.compile(r"^\W*(assalam|salam)\b"),
+    re.compile(r"^\W*(oke?|ok|okay|baik|siap|sip|mantap|noted)\W*$"),
+    re.compile(r"^\W*(sampai\s+jumpa|bye|dadah|permisi\s*$)"),
+]
+
+# Panjang maksimum sebuah pesan agar masih dianggap basa-basi. Kalimat yang
+# lebih panjang hampir selalu membawa isi, sekalipun diawali sapaan.
+_SMALL_TALK_MAX_WORDS = 6
+
+
+def _is_small_talk(low: str, symptom_hits) -> bool:
+    """
+    Apakah pesan ini hanya basa-basi.
+
+    Tiga syarat harus terpenuhi bersamaan: polanya cocok, pesannya pendek, dan
+    tidak ada gejala maupun konsep kesehatan yang disebut. Tanpa syarat kedua
+    dan ketiga, "halo dok, saya batuk berdahak sudah seminggu" akan dijawab
+    dengan sapaan dan keluhannya hilang.
+    """
+    if symptom_hits:
+        return False
+    if len(low.split()) > _SMALL_TALK_MAX_WORDS:
+        return False
+    if not any(pattern.search(low) for pattern in _SMALL_TALK_PATTERNS):
+        return False
+
+    from ..retrieval.concepts import extract_health_concepts
+
+    return not extract_health_concepts(low)
+
+
 def classify_intent(query: str,
                     mode: Optional[Mode] = None,
                     previous_messages: Optional[List[Dict[str, str]]] = None) -> IntentResult:
@@ -180,6 +218,11 @@ def classify_intent(query: str,
 
     if is_out_of_scope(low):
         return IntentResult(Intent.UNSUPPORTED, 0.9, ["out_of_scope_topic"], False)
+
+    # Didahulukan atas seluruh pola lain: tanpa ini "terima kasih banyak"
+    # menempuh pencarian literatur lengkap dan kembali membawa lima jurnal.
+    if _is_small_talk(low, find_symptom_variants(low)):
+        return IntentResult(Intent.SMALL_TALK, 0.9, ["conversational_courtesy"], True)
 
     # Mode eksplisit dari caller adalah sinyal kuat, tapi bukan penentu mutlak.
     mode = Mode.coerce(mode) if mode is not None else None
