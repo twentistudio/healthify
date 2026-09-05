@@ -1,19 +1,11 @@
 """
-Terbitkan kunci API Intelligence untuk satu konsumen.
+Terbitkan satu kunci API untuk sebuah konsumen.
 
-Kunci dibuat dengan generator acak kriptografis, ditampilkan SEKALI, lalu hanya
-SHA-256-nya yang disimpan. Tidak ada cara menampilkan ulang nilai aslinya; bila
-hilang, terbitkan yang baru dan cabut yang lama.
-
-Satu konsumen boleh memegang banyak kunci sekaligus, misalnya satu per
-lingkungan atau per aplikasi, sehingga satu kunci dapat dicabut tanpa
+Kunci ditampilkan sekali; yang tersimpan hanya SHA-256-nya. Satu konsumen boleh
+memegang banyak kunci, misalnya per lingkungan, agar satu dapat dicabut tanpa
 mematikan yang lain.
 
-Pemakaian:
-    python manage.py issue_api_key --consumer healthtalk
-    python manage.py issue_api_key --consumer healthtalk --label "backend produksi"
-    python manage.py issue_api_key --consumer healthtalk --rate "120/min"
-    python manage.py issue_api_key --consumer healthtalk --request 7
+    python manage.py issue_api_key --consumer healthtalk --request 3 --email
 """
 
 import secrets

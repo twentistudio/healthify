@@ -1,11 +1,11 @@
 """
-Test suite untuk Health Intelligence Engine (§26).
+Test suite untuk Health Intelligence Engine.
 
 Cakupan:
     - Query understanding (claim / symptom / follow-up / general / medication)
     - Conversation context (multi-turn, referensi, durasi, akumulasi gejala)
     - Retrieval (evidence relevan / tidak relevan / tidak ada)
-    - Evidence integrity — ANTI-404 / anti-DOI-halusinasi
+    - Evidence integrity, ANTI-404 / anti-DOI-halusinasi
     - Generation (grounded, unsupported claim, uncertainty)
     - Safety (benign, high-risk, emergency)
     - Summary (ekstraksi, tanpa halusinasi, provenance)
@@ -39,6 +39,7 @@ OFFLINE = override_settings(
     INTELLIGENCE_LLM_ENABLED="0",
     EMBEDDINGS_ENABLED="0",
     EVIDENCE_LINK_CHECK_ENABLED=False,
+    KNOWLEDGE_ACQUISITION_ENABLED="0",
     INTELLIGENCE_API_KEYS={},
 )
 
@@ -64,7 +65,7 @@ def make_journal(**kwargs):
 
 
 # ===========================================================================
-# 1. QUERY UNDERSTANDING (§7)
+# 1. QUERY UNDERSTANDING
 # ===========================================================================
 
 class QueryUnderstandingTests(TestCase):
@@ -139,7 +140,7 @@ class QueryUnderstandingTests(TestCase):
 
 
 # ===========================================================================
-# 2. HEALTH CONTEXT & CONVERSATION (§8, §9)
+# 2. HEALTH CONTEXT & CONVERSATION
 # ===========================================================================
 
 class HealthContextExtractionTests(TestCase):
@@ -162,7 +163,7 @@ class HealthContextExtractionTests(TestCase):
         self.assertIsNone(extract_duration("saya batuk"))
 
     def test_does_not_invent_unreported_fields(self):
-        """Field yang tidak disebut user WAJIB tetap None / kosong (§8)."""
+        """Field yang tidak disebut user WAJIB tetap None / kosong."""
         from ragai.context.extractor import extract_health_context
 
         ctx = extract_health_context("Saya demam")
@@ -192,7 +193,7 @@ class HealthContextExtractionTests(TestCase):
         self.assertTrue(any("amoxicillin" in a for a in ctx.allergies))
 
     def test_symptom_accumulation_across_turns(self):
-        """'Saya demam' + 'sudah tiga hari' -> duration(demam) = 3 hari (§9)."""
+        """'Saya demam' + 'sudah tiga hari' -> duration(demam) = 3 hari."""
         from ragai.context.extractor import extract_health_context
 
         ctx = extract_health_context("Saya demam")
@@ -266,7 +267,7 @@ class ConversationContextTests(TestCase):
 
 
 # ===========================================================================
-# 3. EVIDENCE INTEGRITY — ANTI-404 (§14)
+# 3. EVIDENCE INTEGRITY, ANTI-404
 # ===========================================================================
 
 class LinkValidationTests(TestCase):
@@ -408,7 +409,7 @@ class EvidenceSelectorTests(TestCase):
 
 
 # ===========================================================================
-# 4. RETRIEVAL (§10)
+# 4. RETRIEVAL
 # ===========================================================================
 
 @OFFLINE
@@ -452,7 +453,7 @@ class RetrievalTests(TestCase):
         self.assertEqual(status, EvidenceStatus.INSUFFICIENT_EVIDENCE)
 
     def test_retrieves_from_existing_claim_sources(self):
-        """Knowledge base lama (Source/ClaimSource) tetap dipakai (§10, §22)."""
+        """Knowledge base lama (Source/ClaimSource) tetap dipakai."""
         from ragai.retrieval.retriever import retrieve_from_sources
 
         claim = Claim.objects.create(text="Merokok menyebabkan kanker paru")
@@ -480,7 +481,7 @@ class RetrievalTests(TestCase):
 
 
 # ===========================================================================
-# 5. GENERATION (§12, §16)
+# 5. GENERATION
 # ===========================================================================
 
 @OFFLINE
@@ -611,7 +612,7 @@ class ClaimProvenanceTests(TestCase):
 
 
 # ===========================================================================
-# 6. SAFETY (§17)
+# 6. SAFETY
 # ===========================================================================
 
 class SafetyTests(TestCase):
@@ -696,7 +697,7 @@ class SafetyTests(TestCase):
 
 
 # ===========================================================================
-# 7. ENGINE END-TO-END (§4, §18)
+# 7. ENGINE END-TO-END
 # ===========================================================================
 
 @OFFLINE
@@ -743,7 +744,7 @@ class EngineTests(TestCase):
         )
 
     def test_every_published_evidence_has_safe_link(self):
-        """Tidak boleh ada URL yang berasal dari DOI tak terverifikasi (§14)."""
+        """Tidak boleh ada URL yang berasal dari DOI tak terverifikasi."""
         from ragai import engine
 
         result = engine.process({"query": "demam dan batuk tiga hari",
@@ -797,7 +798,7 @@ class EngineTests(TestCase):
 
 
 # ===========================================================================
-# 8. CONSULTATION SUMMARY (§19, §20)
+# 8. CONSULTATION SUMMARY
 # ===========================================================================
 
 @OFFLINE
@@ -863,7 +864,7 @@ class ConsultationSummaryTests(TestCase):
 
 
 # ===========================================================================
-# 9. API LAYER (§21)
+# 9. API LAYER
 # ===========================================================================
 
 @OFFLINE
@@ -1038,7 +1039,7 @@ class ApiDocsTests(TestCase):
 
 
 # ===========================================================================
-# 11. BACKWARD COMPATIBILITY (§25, §28)
+# 11. BACKWARD COMPATIBILITY
 # ===========================================================================
 
 @OFFLINE
@@ -1122,7 +1123,7 @@ class BackwardCompatibilityTests(TestCase):
         self.assertTrue(all(item["_trusted"] for item in evidence))
 
     def test_call_ai_direct_returns_unverified_without_evidence(self):
-        """Tanpa evidence, sistem TIDAK meminta LLM menebak (§16)."""
+        """Tanpa evidence, sistem TIDAK meminta LLM menebak."""
         from .ai_adapter import call_ai_direct
 
         JournalArticle.objects.all().delete()
@@ -1453,42 +1454,10 @@ class LlmProviderFallbackTests(TestCase):
         llm.reset_health()
         self.addCleanup(llm.reset_health)
 
-    def test_falls_through_to_next_provider_on_failure(self):
-        from ragai.reasoning import llm
 
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "invalid", "OPENAI_API_KEY": "ok"}), \
-             patch.object(llm, "_generate_gemini", side_effect=Exception("API key not valid")), \
-             patch.object(llm, "_generate_openai_compatible", return_value="jawaban"):
-            result = llm.generate("halo")
 
-        self.assertEqual(result, "jawaban")
-        self.assertTrue(llm.is_unhealthy(llm.PROVIDER_GEMINI))
-        self.assertEqual(llm.available_provider(), llm.PROVIDER_OPENAI)
-
-    def test_returns_none_when_every_provider_fails(self):
-        from ragai.reasoning import llm
-
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "x", "OPENAI_API_KEY": "y"}), \
-             patch.object(llm, "_generate_gemini", side_effect=Exception("boom")), \
-             patch.object(llm, "_generate_openai_compatible", side_effect=Exception("boom")):
-            self.assertIsNone(llm.generate("halo"))
-
-    def test_unhealthy_provider_is_skipped(self):
-        from ragai.reasoning import llm
-
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "x", "OPENAI_API_KEY": "y"}):
-            llm.mark_unhealthy(llm.PROVIDER_GEMINI, "diuji")
-            with patch.object(llm, "_generate_gemini") as gemini, \
-                 patch.object(llm, "_generate_openai_compatible", return_value="ok"):
-                llm.generate("halo")
-            gemini.assert_not_called()
 
     @override_settings(LLM_PROVIDER="openai")
-    def test_preference_setting_reorders_chain(self):
-        from ragai.reasoning import llm
-
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "x", "OPENAI_API_KEY": "y"}):
-            self.assertEqual(llm.configured_providers()[0], llm.PROVIDER_OPENAI)
 
     @override_settings(INTELLIGENCE_LLM_ENABLED="0")
     def test_disabled_flag_returns_no_provider(self):
@@ -1499,17 +1468,6 @@ class LlmProviderFallbackTests(TestCase):
             self.assertIsNone(llm.available_provider())
 
 
-class GeminiKeyNormalizationTests(TestCase):
-    def test_settings_normalizes_gemini_api_alias(self):
-        """training/.env memakai GEMINI_API; kode membaca GEMINI_API_KEY."""
-        import os
-        import re
-        from pathlib import Path
-
-        settings_src = Path(__file__).resolve().parent.parent / "backend_project" / "settings.py"
-        source = settings_src.read_text()
-        self.assertIn("GEMINI_API_KEY", source)
-        self.assertRegex(source, r"os\.getenv\(['\"]GEMINI_API['\"]\)")
 
 
 # ===========================================================================
@@ -1638,21 +1596,8 @@ class LlmProviderPreferenceTests(TestCase):
         self.addCleanup(llm.reset_health)
 
     @override_settings(LLM_PROVIDER="openai")
-    def test_named_provider_excludes_others(self):
-        from ragai.reasoning import llm
-
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "x", "OPENAI_API_KEY": "y"}):
-            self.assertEqual(llm.configured_providers(), [llm.PROVIDER_OPENAI])
 
     @override_settings(LLM_PROVIDER="openai")
-    def test_excluded_provider_is_never_called(self):
-        from ragai.reasoning import llm
-
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "kunci-mati", "OPENAI_API_KEY": "y"}), \
-             patch.object(llm, "_generate_gemini") as gemini, \
-             patch.object(llm, "_generate_openai_compatible", return_value="ok"):
-            self.assertEqual(llm.generate("halo"), "ok")
-        gemini.assert_not_called()
 
     @override_settings(LLM_PROVIDER="tidak-ada")
     def test_unknown_provider_degrades_to_no_llm(self):
@@ -1725,8 +1670,7 @@ class EmbeddingProviderTests(TestCase):
             embeddings = FakeEmbeddings()
 
         with patch.dict("os.environ", {"OPENAI_API_KEY": "y"}, clear=False), \
-             patch("openai.OpenAI", return_value=FakeClient()), \
-             patch.object(embeddings, "_embed_training", side_effect=Exception("tidak ada")):
+             patch("openai.OpenAI", return_value=FakeClient()):
             self.assertIsNone(embeddings.embed_texts(["teks"]))
 
     @override_settings(EMBEDDING_DIMENSIONS="768")
@@ -1745,7 +1689,7 @@ class EmbeddingProviderTests(TestCase):
 
 @override_settings(LLM_PROVIDER="openai")
 class TranslationProviderTests(TestCase):
-    """Deployment full OpenAI tidak boleh menyentuh Gemini sama sekali."""
+    """Deployment yang mengunci satu penyedia tidak menyentuh penyedia lain."""
 
     def setUp(self):
         from django.core.cache import cache
@@ -1754,16 +1698,6 @@ class TranslationProviderTests(TestCase):
         llm.reset_health()
         self.addCleanup(llm.reset_health)
 
-    def test_gemini_is_not_called_when_excluded(self):
-        from api import views
-
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "kunci-mati", "OPENAI_API_KEY": "y"}), \
-             patch.object(views, "get_gemini_client") as gemini_client, \
-             patch("ragai.reasoning.llm.generate", return_value="Translated"):
-            result = views.translate_text("Teks kesehatan yang cukup panjang.", "en")
-
-        self.assertEqual(result, "Translated")
-        gemini_client.assert_not_called()
 
     def test_short_text_is_returned_unchanged(self):
         from api import views
@@ -2105,7 +2039,7 @@ class VectorStoreProvisioningTests(TestCase):
 class SemanticBlendingTests(TestCase):
     """
     Cosine similarity antar teks kesehatan selalu tinggi, jadi sinyal semantik
-    harus dikalibrasi — kalau tidak ia menjadi lantai seragam yang mengacak
+    harus dikalibrasi, kalau tidak ia menjadi lantai seragam yang mengacak
     peringkat leksikal.
     """
 
@@ -2197,10 +2131,10 @@ class CandidateScopeTests(TestCase):
 
 
 class CorsSecurityTests(TestCase):
-    """CORS harus eksplisit — tidak ada wildcard, tidak ada domain hardcoded."""
+    """CORS harus eksplisit, tidak ada wildcard, tidak ada domain hardcoded."""
 
     def test_no_hardcoded_domains_in_settings(self):
-        """Domain hanya boleh datang dari environment — komentar diabaikan."""
+        """Domain hanya boleh datang dari environment, komentar diabaikan."""
         from pathlib import Path
 
         source = (Path(__file__).resolve().parent.parent
@@ -2263,7 +2197,7 @@ class CorsSecurityTests(TestCase):
 
 
 class ProxyTlsTests(TestCase):
-    """Di belakang reverse proxy, URL absolut harus https — bukan http."""
+    """Di belakang reverse proxy, URL absolut harus https, bukan http."""
 
     def test_forwarded_host_not_trusted_by_default(self):
         """Host sudah benar dari nginx; mempercayai X-Forwarded-Host hanya menambah risiko."""
@@ -2641,7 +2575,7 @@ class RateLimitTests(TestCase):
         self.client = APIClient()
         make_journal()
         # DRF membaca THROTTLE_RATES saat import, jadi override_settings tidak
-        # berpengaruh — batasnya ditambal langsung di kelas throttle.
+        # berpengaruh, batasnya ditambal langsung di kelas throttle.
         patcher = patch.object(
             ConsumerRateThrottle, "THROTTLE_RATES", {"intelligence": "3/min"}
         )
@@ -3721,7 +3655,8 @@ class AutomaticCoverageTests(TestCase):
         """
         from ragai.retrieval import acquisition
 
-        with patch.object(acquisition, "search_crossref", return_value=[]) as fetch:
+        with self.settings(KNOWLEDGE_ACQUISITION_ENABLED="1"), \
+             patch.object(acquisition, "search_crossref", return_value=[]) as fetch:
             acquisition.ensure_coverage("apakah covid berbahaya")
             acquisition.ensure_coverage("apakah covid berbahaya")
 
@@ -4023,7 +3958,7 @@ class ThinCoverageTests(TestCase):
     """
     Bukti yang ADA belum tentu membahas yang ditanyakan. Pertanyaan tentang
     skabies bisa menarik lima paper penyakit kulit lain dan lolos sebagai
-    "cukup" — persis keluhan yang paling merusak kepercayaan. Sistem harus
+    "cukup", persis keluhan yang paling merusak kepercayaan. Sistem harus
     menyadarinya sendiri, bukan menunggu dilaporkan.
     """
 
@@ -4049,7 +3984,8 @@ class ThinCoverageTests(TestCase):
         """
         from ragai.retrieval import acquisition
 
-        with patch("api.views.translate_text", return_value="scabies skin transmission"), \
+        with self.settings(KNOWLEDGE_ACQUISITION_ENABLED="1"), \
+             patch("api.views.translate_text", return_value="scabies skin transmission"), \
              patch.object(acquisition, "search_crossref", return_value=[]) as fetch:
             acquisition.ensure_coverage("skabies menular lewat sentuhan kulit")
             acquisition.ensure_coverage("skabies menular lewat sentuhan kulit")
@@ -4235,7 +4171,8 @@ class AcquisitionLatencyTests(TestCase):
         items = [{"type": "journal-article", "DOI": f"10.1/{c}",
                   "title": ["T"], "abstract": "x" * 300} for c in "abcd"]
 
-        with patch.object(acquisition, "search_crossref", return_value=items), \
+        with self.settings(KNOWLEDGE_ACQUISITION_ENABLED="1"), \
+             patch.object(acquisition, "search_crossref", return_value=items), \
              patch("api.views.translate_text", return_value="typhoid fever"), \
              patch.object(acquisition.lv, "resolve_doi",
                           return_value=acquisition.lv.STATUS_VERIFIED), \
@@ -5288,3 +5225,302 @@ class EngineBoundaryTests(TestCase):
 
         self.assertTrue(response.answer)
         self.assertTrue(ragai.version())
+
+
+class EngineConfigurationTests(TestCase):
+    """
+    Konfigurasi engine dibaca dari satu tempat dengan urutan yang sama untuk
+    seluruh modul. Sebelumnya urutan itu ditulis ulang di tiga berkas dengan
+    perbedaan halus, dan perbedaan seperti itu tidak terlihat sampai satu
+    setelan berperilaku lain dari yang lain.
+    """
+
+    def tearDown(self):
+        from ragai import runtime
+
+        runtime._config.clear()
+
+    def test_host_registration_wins_over_environment(self):
+        import os
+
+        from ragai import config, runtime
+
+        with patch.dict(os.environ, {"LLM_MODEL": "dari-env"}):
+            runtime.configure(config={"LLM_MODEL": "dari-host"})
+
+            self.assertEqual(config.get("LLM_MODEL"), "dari-host")
+
+    def test_environment_is_used_when_host_is_silent(self):
+        import os
+
+        from ragai import config
+
+        with patch.dict(os.environ, {"CROSSREF_MAILTO": "ops@example.com"}):
+            self.assertEqual(config.get("CROSSREF_MAILTO"), "ops@example.com")
+
+    def test_empty_environment_value_does_not_mask_the_default(self):
+        """
+        Nama yang dideklarasikan tanpa nilai adalah keadaan lazim di berkas
+        `.env`, dan tidak boleh menutupi nilai bawaan.
+        """
+        import os
+
+        from ragai import config
+
+        with patch.dict(os.environ, {"CROSSREF_MAILTO": ""}):
+            self.assertEqual(config.get("CROSSREF_MAILTO", "bawaan"), "bawaan")
+
+    def test_empty_host_setting_is_respected(self):
+        """
+        Sebaliknya, setelan yang sengaja dikosongkan aplikasi induk adalah
+        pernyataan: `LLM_PROVIDER` kosong berarti "tanpa preferensi", dan
+        variabel lingkungan tidak boleh mengambil alih.
+        """
+        import os
+
+        from ragai import config
+
+        with patch.dict(os.environ, {"LLM_PROVIDER": "openai"}), \
+             self.settings(LLM_PROVIDER=""):
+            self.assertEqual(config.get("LLM_PROVIDER"), "")
+
+    def test_boolean_reads_the_usual_false_spellings(self):
+        import os
+
+        from ragai import config
+
+        for value in ("0", "false", "no", "off"):
+            with patch.dict(os.environ, {"CROSSREF_MAILTO": value}):
+                self.assertFalse(config.get_bool("CROSSREF_MAILTO"),
+                                 f"{value!r} seharusnya dibaca salah")
+        with patch.dict(os.environ, {"CROSSREF_MAILTO": "1"}):
+            self.assertTrue(config.get_bool("CROSSREF_MAILTO"))
+
+    def test_unreadable_number_falls_back(self):
+        import os
+
+        from ragai import config
+
+        with patch.dict(os.environ, {"EMBEDDING_DIMENSIONS": "bukan-angka"}):
+            self.assertEqual(config.get_int("EMBEDDING_DIMENSIONS", 768), 768)
+
+    def test_every_variable_the_engine_reads_is_documented(self):
+        """
+        Berkas `.env.example` adalah satu-satunya keterangan tentang apa yang
+        dibutuhkan engine saat dipasang di tempat lain.
+        """
+        import pathlib
+        import re
+
+        import ragai
+
+        root = pathlib.Path(ragai.__file__).parent
+        used = set()
+        for path in root.rglob("*.py"):
+            if path.name == "config.py":
+                continue
+            used |= set(re.findall(r'config\.get(?:_bool|_int|_dict)?\("([A-Z_]+)"',
+                                   path.read_text()))
+
+        documented = set(re.findall(r"^#?\s*([A-Z_]+)=?",
+                                    (root / ".env.example").read_text(), re.M))
+
+        self.assertEqual(used - documented, set(),
+                         "ada setelan yang dibaca engine tetapi tidak didokumentasikan")
+
+
+class ProviderFallbackTests(TestCase):
+    """
+    Kredensial bisa kedaluwarsa tanpa pemberitahuan. Rantai fallback menjaga
+    jawaban tetap keluar, dan menandai penyedia yang gagal supaya permintaan
+    berikutnya tidak membayar timeout yang sama.
+    """
+
+    def setUp(self):
+        from ragai.reasoning import llm
+
+        llm.reset_health()
+        self.addCleanup(llm.reset_health)
+
+    def test_next_provider_takes_over_when_one_fails(self):
+        import os
+
+        from ragai.reasoning import llm
+
+        calls = []
+
+        def flaky(prompt, temperature, max_tokens, system, provider):
+            calls.append(provider)
+            if provider == llm.PROVIDER_OPENAI:
+                raise Exception("API key not valid")
+            return "jawaban"
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "ok", "LLM_API_KEY": "ok"}), \
+             self.settings(LLM_PROVIDER=""), \
+             patch.object(llm, "_generate_openai_compatible", side_effect=flaky):
+            result = llm.generate("halo")
+
+        self.assertEqual(result, "jawaban")
+        self.assertTrue(llm.is_unhealthy(llm.PROVIDER_OPENAI))
+        self.assertIn(llm.PROVIDER_COMPATIBLE, calls)
+
+    def test_none_when_every_provider_fails(self):
+        import os
+
+        from ragai.reasoning import llm
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "ok"}), \
+             self.settings(LLM_PROVIDER=""), \
+             patch.object(llm, "_generate_openai_compatible",
+                          side_effect=Exception("boom")):
+            self.assertIsNone(llm.generate("halo"))
+
+    def test_provider_marked_unhealthy_is_skipped(self):
+        import os
+
+        from ragai.reasoning import llm
+
+        llm.mark_unhealthy(llm.PROVIDER_OPENAI)
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "ok"}), \
+             self.settings(LLM_PROVIDER=""), \
+             patch.object(llm, "_generate_openai_compatible") as call:
+            llm.generate("halo")
+
+        for invocation in call.call_args_list:
+            self.assertNotEqual(invocation.args[-1], llm.PROVIDER_OPENAI)
+
+    def test_named_provider_excludes_the_others(self):
+        """
+        `LLM_PROVIDER` yang diisi bersifat eksklusif: deployment yang sudah
+        memilih satu penyedia tidak membayar percobaan ke penyedia lain.
+        """
+        import os
+
+        from ragai.reasoning import llm
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "ok", "LLM_API_KEY": "ok"}), \
+             self.settings(LLM_PROVIDER="openai"), \
+             patch.object(llm, "_generate_openai_compatible",
+                          return_value="jawaban") as call:
+            llm.generate("halo")
+
+        used = {invocation.args[-1] for invocation in call.call_args_list}
+        self.assertEqual(used, {llm.PROVIDER_OPENAI})
+
+
+class AcquisitionGateTests(TestCase):
+    """
+    Pelengkapan otomatis menembak Crossref dan penerjemah. Tanpa gerbang, satu
+    kali menjalankan suite ikut mengunduh jurnal sungguhan: lambat, memakai
+    kuota, dan hasilnya berbeda tiap kali dijalankan.
+    """
+
+    def test_gate_stops_the_network_call(self):
+        from ragai.retrieval import acquisition
+
+        with self.settings(KNOWLEDGE_ACQUISITION_ENABLED="0"), \
+             patch.object(acquisition, "search_crossref") as fetch:
+            added = acquisition.ensure_coverage("apakah tifus menular",
+                                                health_checked=True)
+
+        self.assertEqual(added, 0)
+        fetch.assert_not_called()
+
+    def test_opt_in_restores_the_fetch(self):
+        """Uji yang memang menguji jalur ini menyalakannya sendiri."""
+        from ragai.retrieval import acquisition
+
+        with self.settings(KNOWLEDGE_ACQUISITION_ENABLED="1"), \
+             patch("api.views.translate_text", return_value="typhoid fever"), \
+             patch.object(acquisition, "search_crossref", return_value=[]) as fetch:
+            acquisition.ensure_coverage("apakah tifus menular", health_checked=True)
+
+        fetch.assert_called_once()
+
+
+class TestRunTouchesNoNetworkTests(TestCase):
+    """
+    Suite yang menembak Crossref membuat hasilnya berbeda tiap kali dijalankan
+    dan memakai kuota API. Jaringan hanya disentuh oleh uji yang memintanya
+    secara eksplisit.
+    """
+
+    def test_acquisition_is_off_by_default_under_test(self):
+        from ragai import config
+
+        self.assertFalse(config.get_bool("KNOWLEDGE_ACQUISITION_ENABLED", True))
+
+    def test_a_test_may_still_opt_in(self):
+        from ragai import config
+
+        with self.settings(KNOWLEDGE_ACQUISITION_ENABLED="1"):
+            self.assertTrue(config.get_bool("KNOWLEDGE_ACQUISITION_ENABLED"))
+
+
+class EnginePortabilityTests(TestCase):
+    """
+    Engine dirancang untuk dipindahkan keluar dari Healthify. Yang membuktikan
+    itu bukan tidak adanya impor, melainkan engine benar-benar berjalan dengan
+    model yang bukan milik Healthify.
+    """
+
+    def test_engine_runs_on_models_it_has_never_seen(self):
+        from ragai import runtime
+        from ragai.retrieval.retriever import retrieve_from_journals
+        from api.models import JournalArticle
+
+        class KatalogLain(JournalArticle):
+            """Model milik aplikasi lain, hanya berbagi bentuk kolomnya."""
+
+            class Meta:
+                proxy = True
+
+        KatalogLain.objects.create(
+            title="Dengue fever transmission by Aedes mosquitoes",
+            abstract="Dengue is transmitted by mosquito bites. " * 12,
+            doi="10.1016/j.dengue.2021.01.001", url="u", publisher="Elsevier")
+
+        semula = runtime._models["JournalArticle"]
+        runtime.configure(models={"JournalArticle": KatalogLain})
+        self.addCleanup(runtime.configure, models={"JournalArticle": semula})
+
+        hasil = retrieve_from_journals(["dengue"], limit=5)
+
+        self.assertTrue(hasil)
+        self.assertIn("Dengue", hasil[0].title)
+
+    def test_missing_registration_is_reported_at_startup(self):
+        from ragai import runtime
+        from ragai.checks import check_installation
+
+        semula = runtime._models.pop("JournalArticle")
+        self.addCleanup(runtime.configure, models={"JournalArticle": semula})
+
+        masalah = check_installation()
+
+        kode = [m.id for m in masalah]
+        self.assertIn("ragai.E001", kode)
+        self.assertIn("configure", masalah[0].hint)
+
+    def test_a_complete_installation_reports_nothing(self):
+        from ragai.checks import check_installation
+
+        self.assertEqual([m.id for m in check_installation() if m.id.endswith("E001")], [])
+
+    def test_optional_services_only_warn(self):
+        """
+        Layanan opsional yang hilang mengurangi kemampuan, tidak menghentikan
+        engine; keduanya dibedakan supaya pemasangan minimal tetap bisa jalan.
+        """
+        from ragai import runtime
+        from ragai.checks import check_installation
+
+        semula = runtime._services.pop("translate")
+        self.addCleanup(runtime.configure, services={"translate": semula})
+
+        masalah = check_installation()
+
+        peringatan = [m for m in masalah if m.id == "ragai.W001"]
+        self.assertEqual(len(peringatan), 1)
+        self.assertEqual([m for m in masalah if m.id.startswith("ragai.E")], [])

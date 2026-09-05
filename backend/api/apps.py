@@ -27,6 +27,13 @@ class ApiConfig(AppConfig):
             Source,
         )
 
+        from django.core.checks import register
+
+        from ragai.checks import check_installation
+
+        # Pemasangan yang kurang lengkap ketahuan saat start.
+        register(check_installation)
+
         runtime.configure(
             models={
                 "JournalArticle": JournalArticle,

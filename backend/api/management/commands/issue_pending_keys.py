@@ -1,20 +1,12 @@
 """
 Terbitkan dan kirimkan kunci API untuk permintaan yang belum dilayani.
 
-Mencari permintaan yang belum pernah diberi kunci, menerbitkan satu untuk
-masing-masing, lalu mengirimkannya ke alamat pemohon.
+Aman dijalankan berulang: penentunya ada-tidaknya kunci yang pernah
+diterbitkan, bukan status permintaan. Bila surat gagal terkirim, kunci yang
+baru dibuat langsung dicabut agar tidak ada kunci hidup tanpa pemilik.
 
-Aman dijalankan berulang: penentunya ada-tidaknya kunci yang pernah diterbitkan,
-bukan status permintaan. Permintaan yang ditolak dilewati.
-
-Bila surat gagal terkirim, kunci yang baru dibuat langsung dicabut agar tidak
-ada kunci hidup yang tidak dipegang siapa pun.
-
-Pemakaian:
     python manage.py issue_pending_keys --dry-run
     python manage.py issue_pending_keys
-    python manage.py issue_pending_keys --limit 5
-    python manage.py issue_pending_keys --include-rejected
 """
 
 import re
@@ -94,7 +86,6 @@ class Command(BaseCommand):
                 "yang tidak dipegang siapa pun. Perbaiki pengiriman surel lalu "
                 "jalankan perintah ini lagi.")
 
-    # ------------------------------------------------------------------
     def _pending_requests(self, include_rejected):
         """
         Permintaan yang belum pernah diberi kunci.

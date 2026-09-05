@@ -665,57 +665,6 @@ class TranslateAndDuplicateTests(TestCase):
         resp = self.client.post(url, data={}, format="json")
         self.assertEqual(resp.status_code, 400)
 
-    def test_translate_verification_result_without_any_llm_provider(self):
-        """Tanpa penyedia LLM sama sekali, teks asli dikembalikan apa adanya."""
-        from django.core.cache import cache
-
-        cache.clear()
-
-        url = reverse("translate-verification-result")
-        payload = {
-            "label": "FAKTA",
-            "summary": "Ini ringkasan yang cukup panjang untuk melewati batas minimal.",
-            "claim_text": "Vitamin C dapat mencegah flu.",
-            "target_language": "en",
-        }
-
-        with patch("api.views.get_gemini_client", return_value=None), \
-             patch("ragai.reasoning.llm.generate", return_value=None):
-            resp = self.client.post(url, data=payload, format="json")
-
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertEqual(data["translated_label"], "FACT")
-        self.assertEqual(data["translated_summary"], payload["summary"])
-        self.assertEqual(data["translated_claim_text"], payload["claim_text"])
-
-    def test_translate_falls_back_to_openai_when_gemini_absent(self):
-        """Tanpa Gemini, terjemahan tetap jalan lewat rantai provider LLM.
-
-        Sebelumnya fitur ini diam-diam mengembalikan teks asli sehingga tombol
-        ganti bahasa di frontend tampak tidak berfungsi.
-        """
-        from django.core.cache import cache
-
-        cache.clear()
-
-        url = reverse("translate-verification-result")
-        payload = {
-            "label": "FAKTA",
-            "summary": "Ini ringkasan yang cukup panjang untuk melewati batas minimal.",
-            "target_language": "en",
-        }
-
-        with patch("api.views.get_gemini_client", return_value=None), \
-             patch("ragai.reasoning.llm.generate",
-                   return_value="This summary is long enough to pass the threshold."):
-            resp = self.client.post(url, data=payload, format="json")
-
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(
-            resp.json()["translated_summary"],
-            "This summary is long enough to pass the threshold.",
-        )
 
     def test_check_claim_duplicate_finds_exact_match(self):
         Claim.objects.create(text="Vitamin c membantu imunitas")
@@ -888,60 +837,6 @@ class ViewsDeepCoverageTests(TestCase):
         )
         self.client.force_authenticate(user=self.admin)
 
-    def test_embed_journal_article_direct_success(self):
-        from api.views import embed_journal_article
-        from api.models import JournalArticle
-        import sys
-        import types
-
-        class DummyCursor:
-            def __enter__(self):
-                return self
-            def __exit__(self, exc_type, exc, tb):
-                return False
-            def execute(self, *args, **kwargs):
-                return None
-
-        class DummyConn:
-            def cursor(self):
-                return DummyCursor()
-            def commit(self):
-                return None
-            def close(self):
-                return None
-
-        journal = JournalArticle.objects.create(
-            title="Judul",
-            abstract="Isi abstrak yang cukup panjang untuk embedding.",
-            source_portal="other",
-        )
-
-        # Inject dummy training modules to avoid ModuleNotFoundError
-        training_mod = types.ModuleType("training")
-        scripts_mod = types.ModuleType("training.scripts")
-        chunk_mod = types.ModuleType("training.scripts.chunk_and_embed")
-        ingest_mod = types.ModuleType("training.scripts.ingest_chunks_to_pg")
-
-        def dummy_embed_texts_gemini(texts):
-            return [[0.1, 0.2, 0.3] for _ in texts]
-
-        def dummy_connect_db():
-            return DummyConn()
-
-        chunk_mod.embed_texts_gemini = dummy_embed_texts_gemini
-        ingest_mod.connect_db = dummy_connect_db
-        ingest_mod.DB_TABLE = "embeddings"
-
-        sys.modules["training"] = training_mod
-        sys.modules["training.scripts"] = scripts_mod
-        sys.modules["training.scripts.chunk_and_embed"] = chunk_mod
-        sys.modules["training.scripts.ingest_chunks_to_pg"] = ingest_mod
-
-        embed_journal_article(journal)
-
-        journal.refresh_from_db()
-        self.assertTrue(journal.is_embedded)
-        self.assertTrue(journal.embedding)
 
     def test_dispute_create_no_match_creates_without_link(self):
         url = reverse("dispute-create")
@@ -989,15 +884,6 @@ class ViewsLabelAndCacheTests(TestCase):
         self.assertEqual(translate_label("uncertain", "id"), "TIDAK PASTI")
         self.assertEqual(translate_label("unverified", "id"), "TIDAK TERVERIFIKASI")
 
-    def test_translate_text_gemini_short_text_returns_original(self):
-        from api.views import translate_text_gemini
-        # < 10 chars → langsung balik
-        self.assertEqual(translate_text_gemini("short", "en"), "short")
-        # 10+ chars tanpa client → tetap balik original
-        self.assertEqual(
-            translate_text_gemini("abcdefghij", "en"),
-            "abcdefghij",
-        )
 
     def test_check_cached_result_prefers_verified(self):
         from api.views import check_cached_result
@@ -1046,35 +932,6 @@ class ViewsLabelAndCacheTests(TestCase):
         self.assertIsNotNone(cached_claim)
         self.assertEqual(vr.label, VerificationResult.LABEL_UNVERIFIED)
 
-    def test_translate_text_gemini_with_client_text(self):
-        from api.views import translate_text_gemini
-        class DummyResp:
-            def __init__(self, text): self.text = text
-        class DummyModels:
-            def generate_content(self, **kwargs): return DummyResp("Translated")
-        class DummyClient:
-            models = DummyModels()
-        with patch("api.views.get_gemini_client", return_value=DummyClient()):
-            out = translate_text_gemini("abcdefghijk", "en")
-        self.assertEqual(out, "Translated")
-
-    def test_translate_text_gemini_with_candidates_parts(self):
-        from api.views import translate_text_gemini
-        class Part:
-            def __init__(self, text): self.text = text
-        class Content:
-            def __init__(self, parts): self.parts = parts
-        class Candidate:
-            def __init__(self, content): self.content = content
-        class DummyResp:
-            def __init__(self): self.candidates = [Candidate(Content([Part("Translated2")]))]
-        class DummyModels:
-            def generate_content(self, **kwargs): return DummyResp()
-        class DummyClient:
-            models = DummyModels()
-        with patch("api.views.get_gemini_client", return_value=DummyClient()):
-            out = translate_text_gemini("abcdefghijklm", "en")
-        self.assertEqual(out, "Translated2")
 
 class AdminJournalImportAndStatsTests(TestCase):
     def setUp(self):
@@ -1144,47 +1001,6 @@ class AdminJournalEmbedBranchTests(TestCase):
         )
         self.client.force_authenticate(user=self.admin)
 
-    def test_embed_without_ids_uses_default_slice(self):
-        from api.models import JournalArticle
-        from api import views
-
-        # Inject dummy training modules
-        import sys, types
-        training_mod = types.ModuleType("training")
-        scripts_mod = types.ModuleType("training.scripts")
-        chunk_mod = types.ModuleType("training.scripts.chunk_and_embed")
-        ingest_mod = types.ModuleType("training.scripts.ingest_chunks_to_pg")
-
-        def dummy_embed_texts_gemini(texts):
-            return [[0.1, 0.2, 0.3] for _ in texts]
-
-        class DummyCursor:
-            def __enter__(self): return self
-            def __exit__(self, exc_type, exc, tb): return False
-            def execute(self, *args, **kwargs): return None
-        class DummyConn:
-            def cursor(self): return DummyCursor()
-            def commit(self): return None
-            def close(self): return None
-        def dummy_connect_db(): return DummyConn()
-
-        chunk_mod.embed_texts_gemini = dummy_embed_texts_gemini
-        ingest_mod.connect_db = dummy_connect_db
-        ingest_mod.DB_TABLE = "embeddings"
-        sys.modules["training"] = training_mod
-        sys.modules["training.scripts"] = scripts_mod
-        sys.modules["training.scripts.chunk_and_embed"] = chunk_mod
-        sys.modules["training.scripts.ingest_chunks_to_pg"] = ingest_mod
-
-        # Create some journals to embed
-        j1 = JournalArticle.objects.create(title="J1", abstract="A1", source_portal="other", is_embedded=False)
-        j2 = JournalArticle.objects.create(title="J2", abstract="A2", source_portal="other", is_embedded=False)
-
-        url = reverse("admin-journal-embed")
-        resp = self.client.post(url, data={}, format="json")
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertGreaterEqual(data["embedded_count"], 1)
 
     def test_embed_error_branch_logs_error(self):
         from api.models import JournalArticle
@@ -1446,7 +1262,7 @@ class AiAdapterUnitTests(TestCase):
                         "label": "verified",
                         "confidence": 0.76,
                         "summary": "Kesimpulan",
-                        # DOI dengan format sah (10.<4-9 digit>/<suffix>) — DOI
+                        # DOI dengan format sah (10.<4-9 digit>/<suffix>), DOI
                         # yang formatnya ngawur kini sengaja ditolak.
                         "sources": [{"doi": "10.1016/j.test.2020.01.001",
                                      "relevance_score": 0.9}],

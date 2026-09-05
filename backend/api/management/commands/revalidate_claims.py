@@ -1,21 +1,11 @@
 """
-Selaraskan ulang hasil verifikasi lama dengan bukti yang benar-benar tersisa.
+Verifikasi ulang klaim yang sumbernya sudah tidak layak.
 
-Latar
------
-`audit_source_links --fix` membuang DOI/URL yang terbukti tidak terdaftar.
-Akibatnya sebagian klaim lama kini berlabel FAKTA/HOAX padahal SELURUH sumber
-pendukungnya sudah tidak punya tautan yang bisa dipertanggungjawabkan —
-label itu tidak lagi berdasar dan menyesatkan pembaca.
+Dijalankan setelah `audit_source_links --fix` membuang tautan rusak: klaim yang
+kehilangan seluruh sumbernya tidak boleh tetap berlabel terverifikasi.
 
-Aturan produk Healthify yang sudah ada berbunyi: tanpa sumber jurnal, label
-adalah TIDAK TERVERIFIKASI (`unverified`, confidence NULL). Perintah ini
-menerapkan aturan itu pada data yang kondisinya berubah.
-
-Pemakaian:
-    python manage.py revalidate_claims                 # laporan saja
-    python manage.py revalidate_claims --fix           # turunkan ke unverified
-    python manage.py revalidate_claims --fix --reverify  # verifikasi ulang penuh
+    python manage.py revalidate_claims --dry-run
+    python manage.py revalidate_claims
 """
 
 from django.core.management.base import BaseCommand
@@ -64,7 +54,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR(
                 f"  Klaim #{claim.id} [{verification.label}"
                 f"{'' if verification.confidence is None else f' {verification.confidence:.2f}'}]"
-                f" sumber berlink {linked}/{total} — {claim.text[:50]}"
+                f" sumber berlink {linked}/{total}, {claim.text[:50]}"
             ))
             if not fix:
                 continue
@@ -94,7 +84,6 @@ class Command(BaseCommand):
                 "Jalankan ulang dengan --fix untuk menerapkan."
             ))
 
-    # ------------------------------------------------------------------
     def _find_affected(self, limit):
         """Klaim berlabel selain 'unverified' yang tidak punya satu pun sumber bertautan."""
         queryset = (

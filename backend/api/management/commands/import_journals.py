@@ -1,23 +1,11 @@
 """
-Isi knowledge base Healthify dengan artikel jurnal NYATA dari Crossref.
+Isi knowledge base dengan artikel jurnal dari Crossref.
 
-Kenapa perintah ini penting
----------------------------
-Sejak perbaikan anti-halusinasi, sumber jawaban HANYA berasal dari knowledge
-base (`JournalArticle` / `Source`). Bila knowledge base kosong, sistem akan
-selalu menjawab `INSUFFICIENT_EVIDENCE` — perilaku yang benar, tapi tidak
-berguna. Perintah ini mengisinya dengan artikel yang DOI-nya benar-benar
-terdaftar.
+Setiap DOI diverifikasi ke registry sebelum disimpan, sehingga tidak ada tautan
+404 yang masuk. Tanpa isi, engine selalu menjawab bukti tidak cukup.
 
-Setiap kandidat diverifikasi ke registry sebelum disimpan, sehingga tidak
-mungkin ada DOI 404 yang masuk.
-
-Pemakaian:
     python manage.py import_journals --query "demam berdarah" --rows 25
-    python manage.py import_journals --query "hipertensi" --query "diabetes tipe 2"
-    python manage.py import_journals --topics-id            # topik kesehatan umum ID
-    python manage.py import_journals --query "asma" --dry-run
-    python manage.py import_journals --query "anemia" --embed
+    python manage.py import_journals --topics-id --embed
 """
 
 import time
@@ -177,7 +165,6 @@ class Command(BaseCommand):
         if options["embed"] and not dry_run and stats["created"]:
             self._embed_pending()
 
-    # ------------------------------------------------------------------
     def _search_crossref(self, query: str, rows: int, from_year: int,
                          mailto: str) -> List[Dict[str, Any]]:
         params = {
@@ -217,7 +204,7 @@ class Command(BaseCommand):
             stats["duplicate"] += 1
             return
 
-        # Verifikasi DOI ke registry — tidak boleh ada DOI tak terdaftar masuk.
+        # Verifikasi DOI ke registry sebelum baris disimpan.
         status = lv.resolve_doi(doi)
         if status != lv.STATUS_VERIFIED:
             stats["rejected_doi"] += 1
@@ -238,15 +225,14 @@ class Command(BaseCommand):
         }
 
         if dry_run:
-            self.stdout.write(f"  [dry-run] {doi} — {title[:70]}")
+            self.stdout.write(f"  [dry-run] {doi}, {title[:70]}")
             stats["created"] += 1
             return
 
         JournalArticle.objects.create(**record)
         stats["created"] += 1
-        self.stdout.write(self.style.SUCCESS(f"  + {doi} — {title[:70]}"))
+        self.stdout.write(self.style.SUCCESS(f"  + {doi}, {title[:70]}"))
 
-    # ------------------------------------------------------------------
     @staticmethod
     def _first(value) -> str:
         if isinstance(value, list):

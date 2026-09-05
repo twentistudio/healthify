@@ -1,8 +1,7 @@
 """
 Spesifikasi OpenAPI 3.1 untuk API publik Healthify.
 
-Dibangun sebagai dict Python (bukan file statis) supaya beberapa nilai —
-versi engine, mode autentikasi, daftar intent — selalu sinkron dengan
+Dibangun sebagai dict Python (bukan file statis) supaya beberapa nilai, versi engine, mode autentikasi, daftar intent, selalu sinkron dengan
 konfigurasi yang benar-benar berjalan.
 
 Dirender oleh Scalar di `/docs`.
@@ -781,7 +780,7 @@ def _schemas(intents, modes, evidence_status, safety_decisions, provenance):
                                  "items": {"$ref": "#/components/schemas/SafetyFlag"}},
                 "preliminary_assessment": {
                     "type": ["object", "null"],
-                    "description": "Asesmen awal — **bukan diagnosis**.",
+                    "description": "Asesmen awal, **bukan diagnosis**.",
                     "properties": {
                         "status": {"type": "string", "const": "PRELIMINARY_ASSESSMENT"},
                         "is_diagnosis": {"type": "boolean", "const": False},

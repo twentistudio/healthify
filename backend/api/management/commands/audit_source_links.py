@@ -1,22 +1,12 @@
 """
-Audit tautan sumber yang SUDAH ada di database.
+Periksa tautan sumber yang sudah tersimpan.
 
-Dua hal diperiksa, dan keduanya berbeda:
+Dua hal yang berbeda: apakah DOI/URL dapat dijangkau, dan apakah judul
+tersimpan benar-benar milik DOI itu. Judul meyakinkan bisa dipasangkan dengan
+DOI nyata milik paper lain, dan pemeriksaan pertama meloloskannya.
 
-1. Apakah DOI/URL dapat dijangkau, untuk menangkap tautan mati dan DOI
-   karangan.
-
-2. Apakah judul tersimpan benar-benar milik DOI itu. Judul meyakinkan bisa
-   dipasangkan dengan DOI yang nyata tetapi milik paper lain, dan pemeriksaan
-   pertama meloloskannya.
-
-Registry adalah satu-satunya otoritas untuk judul sebuah DOI.
-
-Pemakaian:
-    python manage.py audit_source_links                 # laporan saja (dry-run)
-    python manage.py audit_source_links --fix           # bersihkan & perbaiki judul
-    python manage.py audit_source_links --fix --delete-orphans
-    python manage.py audit_source_links --limit 200 --only sources
+    python manage.py audit_source_links            # laporan saja
+    python manage.py audit_source_links --fix
 """
 
 import time
@@ -111,7 +101,6 @@ class Command(BaseCommand):
                 "Jalankan ulang dengan --fix untuk menerapkan perbaikan."
             ))
 
-    # ------------------------------------------------------------------
     def _check(self, doi, url, delay):
         result = lv.validate_reference(doi or "", url or "", trust_on_unknown=False)
         if delay:

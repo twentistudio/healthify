@@ -1,5 +1,5 @@
 """
-Integration/API layer untuk Health Intelligence Engine (§4, §21).
+Integration/API layer untuk Health Intelligence Engine.
 
     HealthTalk -> Healthify API -> Health Intelligence Engine -> Response
 
@@ -7,8 +7,7 @@ Endpoint di file ini adalah KAPABILITAS TAMBAHAN. Tidak satu pun endpoint
 Healthify yang sudah ada (`/api/verify/`, `/api/claims/`, dispute, admin)
 diubah atau dipindahkan. Healthify tetap berjalan penuh tanpa endpoint ini.
 
-Consumer eksternal TIDAK PERNAH menyentuh database Healthify secara langsung —
-semua akses melalui kontrak di bawah ini.
+Consumer eksternal tidak pernah menyentuh database Healthify secara langsung, semua akses melalui kontrak di bawah ini.
 """
 
 import json
@@ -94,9 +93,7 @@ class ConsumerRateThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
-# ---------------------------------------------------------------------------
 # Autentikasi consumer
-# ---------------------------------------------------------------------------
 
 def _database_keys_exist() -> bool:
     """
@@ -139,7 +136,7 @@ def _consumer_for_stored_key(api_key: str):
         pass
 
     # `ConsumerRateThrottle` mencari batas khusus berdasarkan API key, bukan
-    # nama konsumen, jadi kuncinya harus sama persis dengan yang dibaca di sana.
+    # nama konsumen, jadi kuncinya sama persis dengan yang dibaca di sana.
     if record.rate:
         rates = getattr(settings, "INTELLIGENCE_KEY_RATES", None)
         if isinstance(rates, dict):
@@ -153,7 +150,7 @@ def resolve_consumer(request):
     Tentukan identitas consumer dari header.
 
     - Bila `settings.INTELLIGENCE_API_KEYS` diisi ({api_key: consumer_name}),
-      header `X-API-Key` WAJIB dan harus cocok.
+      header `X-API-Key` wajib dan harus cocok.
     - Bila tidak dikonfigurasi, endpoint terbuka (mode pengembangan) dan
       identitas diambil dari `X-Consumer` (default: "healthtalk").
 
@@ -182,9 +179,7 @@ def resolve_consumer(request):
     return consumer or "healthtalk", None
 
 
-# ---------------------------------------------------------------------------
 # Endpoints
-# ---------------------------------------------------------------------------
 
 class IntelligenceQueryView(APIView):
     """
@@ -232,8 +227,8 @@ class IntelligenceQueryView(APIView):
 
         correlation_id = request_correlation_id(request)
 
-        # Idempotensi: permintaan yang diulang dengan kunci sama TIDAK diproses
-        # ulang. Ini penting bagi consumer backend — satu permintaan bisa makan
+        # Idempotensi: permintaan yang diulang dengan kunci sama tidak diproses
+        # ulang. Ini penting bagi consumer backend, satu permintaan bisa makan
         # 2-10 detik, jadi retry setelah timeout wajar terjadi, dan tanpa
         # penjagaan ini retry akan menggandakan giliran percakapan sekaligus
         # membayar dua kali ke penyedia LLM.
@@ -291,7 +286,7 @@ class ConsultationSummaryView(APIView):
     POST /api/v1/intelligence/summary
 
     Hasilkan ringkasan konsultasi terstruktur dari sebuah sesi percakapan.
-    Setiap bagian ringkasan membawa provenance-nya (§20).
+    Setiap bagian ringkasan membawa provenance-nya.
     """
 
     permission_classes = [AllowAny]
@@ -428,7 +423,7 @@ class IntelligenceCapabilitiesView(APIView):
     """
     GET /api/v1/intelligence/capabilities
 
-    Deskripsi kapabilitas engine — supaya consumer tidak perlu menebak
+    Deskripsi kapabilitas engine, supaya consumer tidak perlu menebak
     nilai enum yang didukung.
     """
 
@@ -540,7 +535,7 @@ class AccessRequestView(APIView):
         )
         logger.info("[ACCESS] permintaan akses baru #%s dari %s", access_request.id, email)
 
-        # Pemberitahuan ke operator. Kegagalan di sini tidak boleh menular ke
+        # Pemberitahuan ke operator. Kegagalan di sini tidak menular ke
         # respons: permintaannya sudah tersimpan, dan pemohon berhak menerima
         # konfirmasi itu apa pun yang terjadi dengan surelnya.
         try:

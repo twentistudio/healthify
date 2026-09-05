@@ -850,7 +850,7 @@ class AdminDisputeDetailView(APIView):
                 
                 verification.label = new_label
                 verification.confidence = new_confidence if new_label != 'unverified' else None
-                # Jangan override ringkasan AI jika admin tidak mengisi new_summary
+                # Ringkasan AI dipertahankan bila admin tidak mengisi new_summary
                 verification.summary = new_summary or verification.summary
                 verification.reviewer_notes = f"Admin approved dispute #{dispute.id}\n{review_note}"
                 verification.save()

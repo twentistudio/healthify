@@ -53,7 +53,7 @@ def openapi_schema(request):
 def api_reference(request):
     """Halaman dokumentasi API (Scalar API Reference)."""
     # Path RELATIF, bukan URL absolut: browser mewarisi skema dan host halaman.
-    # Ini menutup Mixed Content secara struktural — tidak bergantung pada
+    # Ini menutup Mixed Content secara struktural, tidak bergantung pada
     # header proxy yang benar.
     spec_url = "/openapi.json"
 

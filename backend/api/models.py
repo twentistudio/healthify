@@ -347,7 +347,7 @@ class JournalArticle(models.Model):
         return f"{self.title[:80]}... ({self.source_portal})"
 
 
-# Health Intelligence Engine — model TAMBAHAN (additive, §23)
+# Health Intelligence Engine, model TAMBAHAN (additive, )
 #
 # Semua model di bawah ini BARU. Tidak ada satu pun field/tabel Healthify yang
 # sudah ada diubah atau dihapus. Healthify tetap berjalan penuh tanpa tabel ini
@@ -423,13 +423,13 @@ class ConversationMessage(models.Model):
 
 
 class ConsultationSummary(models.Model):
-    """Ringkasan terstruktur hasil sebuah sesi konsultasi (§19)."""
+    """Ringkasan terstruktur hasil sebuah sesi konsultasi."""
 
     session = models.ForeignKey(
         ConversationSession, on_delete=models.CASCADE, related_name='summaries'
     )
     chief_complaint = models.TextField(blank=True, default='')
-    # Payload lengkap summary (JSON string) — termasuk provenance tiap bagian
+    # Payload lengkap summary (JSON string), termasuk provenance tiap bagian
     payload = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -443,7 +443,7 @@ class ConsultationSummary(models.Model):
 
 class ApiAccessRequest(models.Model):
     """
-    Permintaan akses API dari pengembang luar (§ dokumentasi publik).
+    Permintaan akses API dari pengembang luar.
 
     Baris ini catatan permintaan, bukan kunci. Kunci diterbitkan terpisah lewat
     `issue_api_key`, sehingga pengisi formulir tidak bisa memberi akses kepada

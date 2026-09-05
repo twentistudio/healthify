@@ -413,7 +413,7 @@ def load_training_env() -> Dict[str, str]:
             from dotenv import dotenv_values
             env_vars = dotenv_values(dotenv_path)
             
-            critical_keys = ["DEEPSEEK_API_KEY", "GEMINI_API_KEY", "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER"]
+            critical_keys = ["OPENAI_API_KEY", "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER"]
             missing_keys = [k for k in critical_keys if not env_vars.get(k)]
             
             if missing_keys:
@@ -649,7 +649,7 @@ def call_ai_verify(claim_text: str, additional_evidence: Optional[Dict[str, Any]
         except Exception as e:
             logger.warning(f"Subprocess failed: {e}, using direct AI call...")
     
-    # Method 3: Direct AI call (FALLBACK - SELALU TERSEDIA)
+    # Method 3: Direct AI call (FALLBACK - selalu TERSEDIA)
     logger.info("Using direct AI call method")
     result = call_ai_direct(claim_text, additional_evidence)
     return normalize_ai_response(result, claim_text)
@@ -723,8 +723,8 @@ def call_ai_direct(claim_text: str, additional_evidence: Optional[Dict[str, Any]
     Direct call ke AI API tanpa menggunakan training script.
     Ini adalah fallback method yang selalu tersedia.
 
-    PERBAIKAN PENTING (anti-halusinasi sumber):
-        Sebelumnya LLM diminta ikut menuliskan daftar `sources` — inilah asal
+    PERBAIKAN penting (anti-halusinasi sumber):
+        Sebelumnya LLM diminta ikut menuliskan daftar `sources`, inilah asal
         DOI karangan yang berujung 404. Sekarang:
 
         1. Evidence diambil DULU dari knowledge base Healthify.
@@ -739,7 +739,7 @@ def call_ai_direct(claim_text: str, additional_evidence: Optional[Dict[str, Any]
 
     evidence = retrieve_grounding_evidence(claim_text)
 
-    # Tanpa evidence, sistem TIDAK meminta LLM menebak (lihat §16).
+    # Tanpa evidence, sistem tidak meminta LLM menebak.
     if not evidence:
         logger.info("[VERIFY] Tidak ada evidence di knowledge base -> unverified")
         return {
@@ -818,7 +818,7 @@ Panduan label:
         
         result = json.loads(result_text.strip())
 
-        # Sumber SELALU berasal dari knowledge base, tidak pernah dari LLM.
+        # Sumber selalu berasal dari knowledge base, tidak pernah dari LLM.
         result['sources'] = evidence
         result['summary'] = strip_fabricated_references(result.get('summary', ''), evidence)
         return result

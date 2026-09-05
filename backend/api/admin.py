@@ -140,7 +140,7 @@ class ApiAccessRequestAdmin(admin.ModelAdmin):
     """
     Peninjauan permintaan akses API.
 
-    Menyetujui di sini TIDAK menerbitkan kunci. Kunci diterbitkan lewat
+    Menyetujui di sini tidak menerbitkan kunci. Kunci diterbitkan lewat
     `python manage.py issue_api_key --consumer <nama> --request <id>`, supaya
     nilainya hanya pernah muncul sekali di terminal operator dan tidak tersimpan
     di mana pun, termasuk di layar admin.

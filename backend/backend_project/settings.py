@@ -32,15 +32,6 @@ _ROOT_ENV_PATH = BASE_DIR.parent / '.env'
 if _ROOT_ENV_PATH.exists():
     load_dotenv(dotenv_path=_ROOT_ENV_PATH)
 
-# Normalisasi nama key Gemini.
-# training/.env memakai `GEMINI_API`, sedangkan kode aplikasi membaca
-# `GEMINI_API_KEY`. Tanpa penyelarasan ini fitur Gemini (terjemahan &
-# embedding) diam-diam mati dan sistem jatuh ke provider lain.
-if not os.getenv('GEMINI_API_KEY'):
-    _gemini_alias = os.getenv('GEMINI_API') or os.getenv('GOOGLE_API_KEY')
-    if _gemini_alias:
-        os.environ['GEMINI_API_KEY'] = _gemini_alias
-
 # Email Configuration (di bagian bawah file, sebelum LOGGING)
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
@@ -240,7 +231,6 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# ---------------------------------------------------------------------------
 # CORS
 #
 # Daftar origin sepenuhnya eksplisit dan berasal dari environment.
@@ -252,7 +242,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 #     CORS_ALLOW_CREDENTIALS = True, siapa pun dapat menerbitkan situs di
 #     vercel.app lalu membaca respons API ini atas nama pengunjung yang login.
 #     Wildcard origin tidak boleh dipakai bersama kredensial.
-# ---------------------------------------------------------------------------
 CORS_ALLOWED_ORIGINS = []
 
 # FRONTEND_URL menerima satu origin ATAU beberapa origin dipisah koma,
@@ -477,7 +466,7 @@ INTELLIGENCE_LLM_ENABLED = os.getenv('INTELLIGENCE_LLM_ENABLED', '1')
 # Provider & model LLM.
 # Memakai variabel yang SUDAH menjadi konvensi repo ini (dibaca juga oleh
 # training/scripts/prompt_and_verify.py) — bukan variabel baru.
-#   LLM_PROVIDER : "openai" | "gemini" | "groq" | ... (dipisah koma, EKSKLUSIF).
+#   LLM_PROVIDER : "openai" | "groq" | ... (dipisah koma, eksklusif).
 #                  Kosong = pakai semua provider berkredensial dengan fallback.
 #   LLM_MODEL    : nama model. Kosong = default engine (gpt-5.4-mini).
 LLM_PROVIDER = os.getenv('LLM_PROVIDER', '')
@@ -487,6 +476,16 @@ LLM_MODEL = os.getenv('LLM_MODEL', '')
 # Set 0 untuk mematikan pemanggilan API embedding — retrieval tetap jalan
 # memakai pencocokan leksikal bilingual.
 EMBEDDINGS_ENABLED = os.getenv('EMBEDDINGS_ENABLED', '1')
+
+# Pelengkapan basis pengetahuan otomatis. Dimatikan pengujian agar tidak
+# menembak Crossref.
+# Pengujian tidak menyentuh jaringan kecuali sebuah uji memintanya secara
+# eksplisit. Tanpa bawaan ini satu kali menjalankan suite ikut mengunduh jurnal
+# sungguhan: lambat, memakai kuota, dan hasilnya berbeda tiap kali dijalankan.
+_is_running_tests = 'test' in os.sys.argv
+
+KNOWLEDGE_ACQUISITION_ENABLED = os.getenv(
+    'KNOWLEDGE_ACQUISITION_ENABLED', '0' if _is_running_tests else '1')
 
 # Model embedding OpenAI. `text-embedding-3-small` mendukung parameter
 # `dimensions`, sehingga keluarannya bisa dipotong agar cocok dengan kolom

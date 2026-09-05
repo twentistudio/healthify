@@ -2,7 +2,6 @@ import logging
 import hashlib
 import re
 import os
-from google import genai
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
@@ -40,23 +39,8 @@ from .email_service import email_service
 
 logger = logging.getLogger(__name__)
 
-_gemini_client = None
 
 # Utility Functions 
-def get_gemini_client():
-    """Get Gemini client, returns None if API key not available."""
-    global _gemini_client
-    if _gemini_client is None:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            logger.warning("GEMINI_API_KEY not found - Gemini features disabled")
-            return None
-        try:
-            _gemini_client = genai.Client(api_key=api_key)
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini client: {e}")
-            return None
-    return _gemini_client
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -351,10 +335,8 @@ def translate_label(label: str, target_lang: str) -> str:
 def translate_text(text: str, target_lang: str) -> str:
     """Terjemahkan lewat penyedia LLM yang benar-benar tersedia.
 
-    Urutan: Gemini (bila dikonfigurasi) -> rantai provider LLM (OpenAI dsb)
     -> teks asli.
 
-    Sebelumnya terjemahan hanya lewat Gemini; tanpa kunci Gemini fitur ini
     diam-diam mengembalikan teks asli sehingga tombol ganti bahasa di frontend
     tampak tidak berfungsi.
     """
@@ -363,14 +345,7 @@ def translate_text(text: str, target_lang: str) -> str:
 
     from ragai.reasoning import llm
 
-    # Gemini hanya dicoba bila memang termasuk provider aktif. Tanpa penjagaan
     # ini, deployment yang sudah full OpenAI tetap membayar satu round-trip
-    # gagal ke Gemini pada setiap permintaan terjemahan.
-    if llm.PROVIDER_GEMINI in llm.configured_providers() and get_gemini_client() is not None:
-        translated = translate_text_gemini(text, target_lang)
-        if translated and translated.strip() != text.strip():
-            return translated
-
     return translate_text_llm(text, target_lang) or text
 
 
@@ -399,63 +374,6 @@ Text to translate:
     return (result or "").strip()
 
 
-def translate_text_gemini(text: str, target_lang: str) -> str:
-    """Translate text menggunakan Gemini API (output hanya teks terjemahan).
-    Returns original text if Gemini not available."""
-    if not text or len(text) < 10:
-        return text
-    
-    try:
-        client = get_gemini_client()
-        
-        # If Gemini not available, return original text
-        if client is None:
-            logger.warning("[TRANSLATE] Gemini client not available, returning original text")
-            return text
-        
-        lang_name = "English" if target_lang == 'en' else "Indonesian"
-        
-        prompt = f"""You are a professional medical translator.
-Translate the following medical/health text into {lang_name}.
-
-Requirements:
-- Output **only** the translated text in {lang_name}.
-- Do not add explanations, notes, alternative phrasings, or quotes.
-- Keep the style and length similar to the original.
-- Preserve medical terminology accuracy.
-
-Text to translate:
-{text}
-"""
-        
-        resp = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt,
-            config={
-                "temperature": 0.0,
-                "max_output_tokens": 1000
-            }
-        )
-        
-        # Extract text
-        if hasattr(resp, 'text'):
-            translated = resp.text.strip()
-        elif hasattr(resp, 'candidates') and resp.candidates:
-            if hasattr(resp.candidates[0], 'content'):
-                if hasattr(resp.candidates[0].content, 'parts'):
-                    translated = resp.candidates[0].content.parts[0].text.strip()
-                else:
-                    translated = str(resp.candidates[0].content)
-            else:
-                translated = text
-        else:
-            translated = text
-        
-        return translated or text
-        
-    except Exception as e:
-        logger.error(f"[TRANSLATE_GEMINI] Error: {e}")
-        return text  # Fallback to original
 
 class ClaimVerifyView(APIView):
     """Main endpoint untuk verifikasi klaim."""
@@ -483,7 +401,7 @@ class ClaimVerifyView(APIView):
 
         try:
             # Klaim yang sama pernah diverifikasi oleh mesin versi lama:
-            # perbarui baris yang ada, jangan menumpuk duplikat teks yang sama.
+            # memperbarui baris yang ada alih-alih menumpuk duplikat teks yang sama.
             claim = self._find_stale_claim(claim_text) or self._create_new_claim(claim_text)
             self._process_verification(claim)
 
@@ -586,7 +504,7 @@ class ClaimVerifyView(APIView):
             },
         )
 
-        # Sumber lama berasal dari mesin versi sebelumnya dan tidak boleh
+        # Sumber lama berasal dari mesin versi sebelumnya dan tidak lagi
         # bercampur dengan hasil baru.
         if not created:
             ClaimSource.objects.filter(claim=claim).delete()
@@ -1303,13 +1221,13 @@ class AdminJournalEmbedView(APIView):
 def embed_journal_article(journal: JournalArticle):
     """Embed single journal article to vector database.
 
-    Embedding dihasilkan lewat penyedia yang tersedia (OpenAI / Gemini /
+    Embedding dihasilkan lewat penyedia yang tersedia (OpenAI /
     sentence-transformers) dengan dimensi yang cocok dengan kolom vektor yang
     sudah ada, sehingga tidak perlu migrasi tabel maupun re-embed korpus lama.
 
     Penyimpanan ke pgvector bersifat best-effort: tabel dan ekstensinya dibuat
     otomatis bila belum ada, dan kegagalannya tidak membatalkan embedding yang
-    sudah tersimpan di kolom `JournalArticle.embedding` — retrieval tetap jalan
+    sudah tersimpan di kolom `JournalArticle.embedding`, retrieval tetap jalan
     dari sana maupun secara leksikal.
     """
     from ragai.retrieval.embeddings import embed_text, store_vector
@@ -1319,7 +1237,7 @@ def embed_journal_article(journal: JournalArticle):
     if not embedding:
         raise RuntimeError(
             "Tidak ada penyedia embedding yang tersedia. Set OPENAI_API_KEY "
-            "(atau GEMINI_API_KEY), lalu ulangi."
+            "lalu ulangi."
         )
 
     journal.embedding = json.dumps(embedding)

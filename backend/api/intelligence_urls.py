@@ -1,5 +1,5 @@
 """
-Routing untuk Health Intelligence Engine (§21).
+Routing untuk Health Intelligence Engine.
 
 Dipasang di prefix TERPISAH (`/api/v1/intelligence/`) agar tidak pernah
 bertabrakan dengan routing Healthify yang sudah ada di `api/urls.py`.
