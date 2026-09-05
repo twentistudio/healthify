@@ -25,6 +25,7 @@ from ..contracts import (
 from ..context.extractor import extract_health_context, health_context_from_dict
 from ..evidence.provenance import provenance_entry
 from ..safety.validator import detect_emergency, detect_high_risk_population
+from .. import runtime
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ def build_summary(session,
 def persist_summary(session, summary: Dict[str, Any]):
     """Simpan summary ke DB. Kegagalan tidak boleh menggagalkan response."""
     try:
-        from ...models import ConsultationSummary
+        ConsultationSummary = runtime.model("ConsultationSummary")
         chief = summary.get("chief_complaint") or {}
         return ConsultationSummary.objects.create(
             session=session,

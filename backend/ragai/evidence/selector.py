@@ -26,27 +26,15 @@ MIN_ITEMS_SUFFICIENT = 2
 MIN_TOP_SCORE_SUFFICIENT = 0.55
 MIN_TOP_SCORE_PARTIAL = 0.38
 
-# Bukti hanya disebut memadai bila ada dokumen yang benar-benar membahas aspek
-# yang ditanyakan. Kumpulan paper yang sekadar menyebut penyakit yang sama
-# bukan jawaban, dan menyebutnya memadai justru menyesatkan pembaca.
+# Paper yang sekadar menyebut penyakit yang sama belum menjawab pertanyaannya.
 MIN_ASPECT_MATCH_SUFFICIENT = 0.5
 
 # Berapa validasi tautan yang berjalan berbarengan.
 VALIDATION_WORKERS = 8
 
-# Lantai kemiripan makna terhadap pertanyaan.
-#
-# Kecocokan kata kunci dan cakupan aspek sama-sama bisa bernilai penuh untuk
-# dokumen yang tidak ada hubungannya: "air putih menjaga hidrasi" mencocoki
-# paper perawatan-diri diabetes lewat kata umum seperti "menjaga" dan
-# "management", dan karena pertanyaannya tidak menyebut nama penyakit, gerbang
-# fokus judul pun tidak punya dasar untuk menolaknya. Kemiripan makna adalah
-# satu-satunya sinyal yang memisahkan keduanya.
-#
-# Diukur pada basis pengetahuan produksi: kasus yang seharusnya kosong memuncak
-# di 0.191 (batuk 0.191, hidrasi 0.163, asam urat 0.044), sedangkan kasus yang
-# benar terendah di 0.326 (gerd), lalu 0.421, 0.513, 0.714, 0.789, 0.941.
-# Ambang di bawah ini berada di tengah jurang tersebut.
+# Lantai kemiripan makna: satu-satunya sinyal yang memisahkan dokumen yang
+# hanya berbagi kata umum. Diukur di produksi, kasus tak relevan memuncak di
+# 0.19 dan kasus benar terendah 0.33, jadi ambangnya di tengah jurang itu.
 MIN_SEMANTIC_RELEVANCE = 0.25
 
 # Origin yang boleh "dipercaya" saat status link tidak bisa dipastikan.
@@ -61,14 +49,9 @@ def validate_links(items: Iterable[EvidenceItem], timeout: float = 5.0) -> List[
     """
     Validasi DOI/URL setiap item dan tulis balik hasilnya ke item.
 
-    Setiap item butuh sampai dua perjalanan jaringan: memastikan DOI-nya
-    terdaftar, lalu mengambil judul resminya. Dikerjakan berurutan, delapan
-    referensi berarti belasan permintaan yang saling menunggu — sekitar tiga
-    detik yang seluruhnya ditanggung orang yang sedang menunggu jawaban.
-    Dikerjakan berbarengan, biayanya tinggal satu perjalanan terlama.
-
-    Hasilnya sendiri di-cache, jadi ongkos ini hanya muncul pada DOI yang baru
-    pertama kali dilihat.
+    Setiap item butuh sampai dua perjalanan jaringan, jadi dikerjakan
+    berbarengan: berurutan, delapan referensi memakan sekitar tiga detik.
+    Hasilnya di-cache, sehingga ongkosnya hanya untuk DOI yang baru.
     """
     items = list(items or [])
     if not items:
@@ -102,12 +85,8 @@ def _validate_one(item: EvidenceItem, timeout: float = 5.0) -> EvidenceItem:
     item.doi_verified = result["doi_verified"]
     item.link_status = result["link_status"]
 
-    # Judul WAJIB berasal dari registry, bukan dari pihak yang mengirimkan.
-    #
-    # Memastikan sebuah DOI terdaftar ternyata belum cukup: judul yang
-    # meyakinkan bisa dipasangkan dengan DOI yang kebetulan nyata tetapi milik
-    # paper lain, sehingga judul di layar berbeda dengan halaman yang terbuka
-    # saat diklik. Registry adalah satu-satunya otoritas di sini.
+    # Judul diambil dari registry: DOI yang terdaftar bisa saja dipasangkan
+    # dengan judul milik paper lain, dan pembaca membuka halaman yang berbeda.
     if item.doi and item.doi_verified:
         _apply_registry_metadata(item, timeout=timeout)
 

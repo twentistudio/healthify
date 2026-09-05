@@ -1,18 +1,14 @@
 """
 Terbitkan dan kirimkan kunci API untuk permintaan yang belum dilayani.
 
-Menutup jarak antara formulir di halaman dokumentasi dan kunci yang sampai ke
-pemohon: mencari permintaan yang belum pernah diberi kunci, menerbitkan satu
-untuk masing-masing, lalu mengirimkannya ke alamat yang mereka isi.
+Mencari permintaan yang belum pernah diberi kunci, menerbitkan satu untuk
+masing-masing, lalu mengirimkannya ke alamat pemohon.
 
-Aman dijalankan berulang. Yang menentukan bukan status permintaan melainkan
-ada-tidaknya kunci yang pernah diterbitkan untuknya, sehingga menjalankan
-perintah ini dua kali tidak pernah menghasilkan kunci ganda. Permintaan yang
-sudah ditolak dilewati.
+Aman dijalankan berulang: penentunya ada-tidaknya kunci yang pernah diterbitkan,
+bukan status permintaan. Permintaan yang ditolak dilewati.
 
-Bila pengiriman surat gagal, kunci yang baru dibuat langsung dicabut. Nilai
-aslinya hanya pernah ada di dalam surat itu; membiarkannya aktif berarti
-menyimpan kunci hidup yang tidak dipegang siapa pun.
+Bila surat gagal terkirim, kunci yang baru dibuat langsung dicabut agar tidak
+ada kunci hidup yang tidak dipegang siapa pun.
 
 Pemakaian:
     python manage.py issue_pending_keys --dry-run
@@ -103,10 +99,8 @@ class Command(BaseCommand):
         """
         Permintaan yang belum pernah diberi kunci.
 
-        Yang diperiksa adalah relasi kunci, bukan kolom status: kunci yang
-        pernah diterbitkan lalu dicabut tetap berarti permintaan itu sudah
-        dilayani, dan menerbitkan yang baru secara diam-diam akan membatalkan
-        keputusan mencabutnya.
+        Diperiksa dari relasi kunci, bukan kolom status: kunci yang pernah
+        dicabut tetap berarti permintaan itu sudah dilayani.
         """
         queryset = ApiAccessRequest.objects.filter(issued_keys__isnull=True)
         if not include_rejected:
@@ -117,10 +111,8 @@ class Command(BaseCommand):
         """
         Nama konsumen yang terbaca manusia dan unik.
 
-        Dipakai di log dan kuota, jadi lebih berguna berupa nama organisasi
-        atau bagian awal surel daripada angka. Bila namanya sudah dipakai
-        konsumen lain, id permintaan ditambahkan agar kuota keduanya tidak
-        tercampur.
+        Dipakai di log dan kuota, jadi diambil dari nama organisasi atau bagian
+        awal surel. Id permintaan ditambahkan bila namanya sudah dipakai.
         """
         raw = (access_request.organization or "").strip()
         if not raw:

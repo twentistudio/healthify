@@ -1,14 +1,9 @@
 """
 Konfigurasi gunicorn.
 
-Ada satu hal yang diurus di sini: menyembunyikan permintaan cek kesehatan dari
-log akses. Docker memanggil `/api/health/` setiap tiga puluh detik selamanya,
-dan baris-baris itu memenuhi hampir separuh isi log tanpa pernah memberi tahu
-apa pun. Yang tersisa setelah disaring adalah lalu lintas sungguhan, sehingga
-log kembali bisa dibaca ketika ada masalah.
-
-Permintaan cek kesehatan yang GAGAL tetap dicatat: itu justru kejadian yang
-perlu terlihat.
+Menyembunyikan cek kesehatan dari log akses. Docker memanggil `/api/health/`
+tiap tiga puluh detik, dan baris-baris itu memenuhi hampir separuh isi log.
+Cek kesehatan yang gagal tetap dicatat.
 """
 
 import os

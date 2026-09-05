@@ -268,16 +268,14 @@ def generate_response(query: str,
         meta["generator"] = "template_unsupported"
         return _UNSUPPORTED_TEMPLATE_ID, meta
 
-    # Basa-basi dijawab seperlunya. Menjalankan pencarian literatur untuk
-    # "terima kasih" memakan waktu dan biaya, lalu melampirkan lima jurnal yang
-    # tidak ada hubungannya dengan apa pun yang ditanyakan.
+    # Basa-basi dijawab seperlunya, tanpa pencarian literatur.
     if intent == Intent.SMALL_TALK:
         meta["generator"] = "template_small_talk"
         greeting = bool(re.match(r"^\W*(halo|hai|hi|hello|selamat\s+(pagi|siang|sore|malam)|assalam)",
                                  (query or "").strip().lower()))
         return (_GREETING_TEMPLATE_ID if greeting else _SMALL_TALK_TEMPLATE_ID), meta
 
-    # §16 — bukti tidak cukup: JANGAN minta LLM menebak.
+    # §16 — bukti tidak cukup, jadi LLM tidak diminta menebak.
     if evidence_status == EvidenceStatus.INSUFFICIENT_EVIDENCE or not evidence:
         meta["generator"] = "template_insufficient_evidence"
         return _INSUFFICIENT_TEMPLATE_ID, meta

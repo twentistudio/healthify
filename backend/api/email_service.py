@@ -66,9 +66,7 @@ class EmailNotificationService:
             logger.error(f"[EMAIL] Failed to send '{subject}': {str(e)}", exc_info=True)
             return False
     
-    # ==============================
     # ADMIN NOTIFICATIONS
-    # ==============================
     
     def notify_admin_new_dispute(self, dispute: Dispute) -> bool:
         """
@@ -260,9 +258,7 @@ Healthify System
             recipient_list=self.admin_emails
         )
     
-    # ==============================
     # USER NOTIFICATIONS
-    # ==============================
     
     def notify_user_dispute_approved(self, dispute: Dispute, admin_notes: str = "") -> bool:
         """Kirim email ke user ketika dispute di-approve."""
@@ -499,16 +495,14 @@ Terima kasih telah berkontribusi untuk memerangi misinformasi kesehatan.
             html_message=html_message
         )
 
-    # ==============================
     # ENGINE PUBLIK (ragai)
-    # ==============================
 
     def _engine_from_header(self) -> str:
         """
         Pengirim untuk surat yang berasal dari engine publik.
 
-        Engine dipasarkan dengan nama tersendiri dan alamat tersendiri, jadi
-        pemohon tidak seharusnya menerima surat atas nama produk Healthify.
+        Engine punya nama sendiri; pemohon tidak menerima surat atas nama
+        produk Healthify.
         """
         name = getattr(settings, 'ENGINE_BRAND_NAME', 'ragai')
         return f"{name} <{self.from_email}>"
@@ -539,9 +533,8 @@ Terima kasih telah berkontribusi untuk memerangi misinformasi kesehatan.
         """
         Beri tahu operator bahwa ada permintaan akses API baru.
 
-        Dipanggil dari endpoint publik, jadi kegagalannya tidak boleh menular ke
-        respons: pemohon tetap menerima konfirmasi bahwa permintaannya tercatat,
-        dan barisnya sudah tersimpan di basis data apa pun yang terjadi di sini.
+        Dipanggil dari endpoint publik, jadi kegagalannya tidak menular ke
+        respons: permintaannya sudah tersimpan apa pun yang terjadi di sini.
         """
         context = {"request_obj": access_request}
         return self._send_as_engine(
@@ -556,9 +549,8 @@ Terima kasih telah berkontribusi untuk memerangi misinformasi kesehatan.
         """
         Kirim kunci API kepada pemohon.
 
-        Kunci hanya pernah ada dalam bentuk aslinya di sini dan di terminal
-        operator; yang tersimpan hanya hash-nya. Karena itu kegagalan pengiriman
-        harus terlihat jelas oleh pemanggil, bukan ditelan diam-diam.
+        Nilai asli kunci hanya ada di sini dan di terminal operator, jadi
+        kegagalan pengiriman dikembalikan ke pemanggil, bukan ditelan.
         """
         context = {
             "name": name or recipient,

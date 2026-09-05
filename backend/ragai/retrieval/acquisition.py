@@ -1,38 +1,20 @@
 """
 Pelengkapan basis pengetahuan secara otomatis.
 
-Kenapa modul ini ada
---------------------
-Sebelumnya, ketika pengguna menanyakan topik yang belum terwakili di basis
-pengetahuan, mesin menjawab "bukti tidak cukup" dan berhenti di situ. Jawaban
-itu jujur, tetapi memindahkan pekerjaan ke manusia: seseorang harus menyadari
-ada lubang, lalu menjalankan `import_journals` untuk topik tersebut. Untuk
-konsumen eksternal yang memanggil API tanpa siapa pun mengawasi, kebiasaan itu
-tidak bisa dipertahankan.
+Ketika sebuah pertanyaan kesehatan tidak menemukan cukup bukti, mesin mencari
+jurnal untuk topik itu ke Crossref, memverifikasi DOI-nya, menyimpannya, lalu
+mengulang pengambilan. Sebelumnya lubang seperti itu hanya bisa ditutup manusia
+yang menjalankan `import_journals`, dan konsumen eksternal tidak punya siapa pun
+yang mengawasi.
 
-Modul ini menutup lubang itu sendiri. Ketika sebuah pertanyaan kesehatan yang
-sah tidak menemukan cukup bukti, mesin mencari jurnal untuk topik tersebut ke
-Crossref, memverifikasi DOI-nya, menyimpannya, lalu mengulang pengambilan satu
-kali.
+Jurnal hasil pengambilan otomatis melewati gerbang yang sama dengan impor
+manual: verifikasi DOI, ambang kemiripan makna, fokus judul, dan penyaringan
+topik. Menambah bahan bacaan tidak melonggarkan syarat relevansi.
 
-Yang TIDAK berubah
-------------------
-Jurnal hasil pengambilan otomatis melewati gerbang yang persis sama dengan
-jurnal yang diimpor manual: verifikasi DOI ke registry, ambang kemiripan makna,
-fokus judul, dan penyaringan topik. Menambah bahan bacaan tidak melonggarkan
-satu pun syarat relevansi, sehingga pelengkapan ini tidak bisa memasukkan paper
-yang tidak nyambung ke dalam jawaban.
-
-Pagar pengaman
---------------
-* Hanya untuk pertanyaan yang mengandung konsep kesehatan yang dikenali.
-* Satu topik hanya dicari sekali dalam `COOLDOWN_SECONDS`, dicatat di cache
-  bersama sehingga berlaku lintas worker.
-* Ada kuota per jam untuk seluruh proses, supaya lonjakan pertanyaan baru tidak
-  berubah menjadi lonjakan permintaan ke Crossref.
-* Batas waktu jaringan pendek, dan setiap kegagalan ditelan: pelengkapan yang
-  gagal hanya berarti jawaban kembali ke perilaku lama, bukan permintaan yang
-  ikut gagal.
+Pagarnya: hanya untuk pertanyaan yang mengandung konsep kesehatan, satu topik
+sekali per `COOLDOWN_SECONDS`, kuota `HOURLY_BUDGET` per jam, batas waktu
+jaringan pendek, dan setiap kegagalan ditelan sehingga permintaan pengguna tidak
+ikut gagal.
 """
 
 import hashlib
@@ -49,6 +31,7 @@ from django.core.cache import cache
 from ..evidence import link_validator as lv
 from ..lexicon import bilingual_variants
 from .concepts import extract_conditions, extract_health_concepts
+from .. import runtime
 
 logger = logging.getLogger(__name__)
 
@@ -115,16 +98,9 @@ def build_topic_phrase(query: str) -> str:
     ("apakah covid berbahaya") menghasilkan pencarian yang buruk, jadi yang
     dikirim adalah konsep kesehatannya dalam bentuk Inggris.
 
-    Dua jalur, sengaja berurutan:
-
-    1. Lewat leksikon, bila konsepnya dikenali. Murah dan tidak menyentuh
-       jaringan.
-    2. Lewat penerjemah, bila tidak. Leksikon ditulis tangan sehingga selalu
-       tertinggal dari kosakata yang benar-benar ditanyakan orang; penyakit
-       yang belum sempat dicatat ("skabies", "kawasaki") dulu tidak terlihat
-       sama sekali oleh sistem, tidak bisa dicari maupun diterjemahkan.
-       Menerjemahkan pertanyaannya membuat kosakata baru tetap terjangkau
-       tanpa menunggu ada yang menambahkannya ke daftar.
+    Istilah dari leksikon digabung dengan hasil terjemahan. Leksikon ditulis
+    tangan sehingga selalu tertinggal; penyakit yang belum tercatat ("skabies",
+    "kawasaki") hanya terjangkau lewat terjemahan.
     """
     concepts = extract_conditions(query) or extract_health_concepts(query)
 
@@ -165,9 +141,8 @@ def _translated_topic(query: str) -> str:
         return cached
 
     try:
-        from api.views import translate_text
-
-        translated = (translate_text(query, "en") or "").strip()
+        translate = runtime.service("translate")
+        translated = (translate(query, "en") or "").strip() if translate else ""
     except Exception as exc:
         logger.warning("[ACQ] terjemahan topik gagal: %s", exc)
         translated = ""
@@ -361,27 +336,21 @@ def ensure_coverage(query: str, health_checked: bool = False) -> int:
     Lengkapi basis pengetahuan untuk topik `query`, kembalikan jumlah jurnal
     baru yang tersimpan.
 
-    Pengambilan yang sesekali tidak perlu sengaja dibiarkan. Menyaringnya lebih
-    jauh menuntut penilaian "apakah bukti ini sudah cukup membahas topik" tanpa
-    menerjemahkan tiap istilah, dan setiap usaha ke arah itu berakhir pada
-    daftar kata buatan tangan yang selalu tertinggal. Batasnya dijaga oleh hal
-    yang tidak bisa meleset: satu topik paling banyak sekali per
-    `COOLDOWN_SECONDS`, dengan kuota `HOURLY_BUDGET` untuk seluruh proses.
-    Akibat terburuk dari pengambilan yang tidak perlu hanyalah bertambahnya
-    jurnal ber-DOI sah untuk topik yang memang sedang ditanyakan.
+    Pengambilan yang sesekali tidak perlu dibiarkan; yang dijaga batasnya, dan
+    akibat terburuknya hanya bertambahnya jurnal ber-DOI sah untuk topik yang
+    memang ditanyakan.
 
-    `health_checked` diisi pemanggil yang sudah memastikan pertanyaannya
-    memang soal kesehatan (mesin memakai hasil klasifikasi intent). Bila tidak,
-    modul ini memeriksanya sendiri, supaya teks sembarang dari endpoint publik
-    tidak bisa mengendalikan permintaan ke Crossref.
+    `health_checked` diisi pemanggil yang sudah memastikan pertanyaannya soal
+    kesehatan. Bila tidak, modul ini memeriksanya sendiri agar teks sembarang
+    dari endpoint publik tidak bisa mengendalikan permintaan ke Crossref.
 
-    Aman dipanggil di tengah permintaan: seluruh kegagalan ditelan dan
-    mengembalikan 0.
+    Aman dipanggil di tengah permintaan: kegagalan ditelan dan mengembalikan 0.
     """
     import os
 
-    from api.models import JournalArticle
     from ..lexicon import find_aspects
+
+    JournalArticle = runtime.model("JournalArticle")
 
     if not health_checked:
         recognized = extract_health_concepts(query) or find_aspects(query)
@@ -476,14 +445,16 @@ def _embed_new_articles() -> None:
         try:
             from django.db import connection
 
-            from api.models import JournalArticle
-            from api.views import embed_journal_article
+            JournalArticle = runtime.model("JournalArticle")
+            embed_article = runtime.service("embed_article")
+            if embed_article is None:
+                return
 
             try:
                 pending = list(JournalArticle.objects.filter(is_embedded=False)[:64])
                 for article in pending:
                     try:
-                        embed_journal_article(article)
+                        embed_article(article)
                     except Exception:
                         continue
                 if pending:

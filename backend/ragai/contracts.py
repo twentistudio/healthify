@@ -262,6 +262,8 @@ class SupportedClaim:
 
 @dataclass
 class SafetyFlag:
+    """Satu temuan lapisan keamanan: kode, tingkat, dan pesannya."""
+
     code: str
     severity: str = "info"  # info | warning | critical
     message: str = ""

@@ -553,7 +553,7 @@ class AdminDisputeDetailView(APIView):
             
             logger.info(f"[ADMIN_DISPUTE_REVIEW] Processing {action} for dispute {dispute_id}")
             
-            # ====== HANDLE APPROVE ======
+            # Persetujuan dispute
             if action == 'approve':
                 result = self._handle_approve(
                     dispute=dispute,
@@ -569,7 +569,7 @@ class AdminDisputeDetailView(APIView):
                 # Trigger pipeline
                 self._trigger_pipeline(dispute)
                 
-            # ====== HANDLE REJECT ======
+            # Penolakan dispute
             else:  # action == 'reject'
                 result = self._handle_reject(
                     dispute=dispute,
@@ -878,12 +878,12 @@ class AdminDisputeDetailView(APIView):
                 final_confidence = new_confidence
                 final_summary = verification.summary
             
-            # ====== RE-VERIFY WITH AI + USER EVIDENCE ======
+            # Verifikasi ulang memakai bukti yang dilampirkan pelapor
             elif re_verify:
                 logger.info(f"[APPROVE] Re-verifying claim with AI and user evidence...")
                 
                 try:
-                    # ====== FETCH EVIDENCE FROM USER'S DOI/URL ======
+                    # Ambil bukti dari DOI/URL yang dikirim pelapor
                     additional_evidence = None
                     
                     if dispute.supporting_doi:
@@ -897,7 +897,7 @@ class AdminDisputeDetailView(APIView):
                     if additional_evidence:
                         logger.info(f"[APPROVE] Evidence fetched: {additional_evidence.get('title', 'N/A')[:50]}")
                     
-                    # ====== CALL AI WITH EVIDENCE ======
+                    # Verifikasi ulang dengan bukti tersebut
                     ai_result = call_ai_verify(dispute.claim.text, additional_evidence=additional_evidence)
                     normalized = normalize_ai_response(ai_result, claim_text=dispute.claim.text)
                     
@@ -961,7 +961,7 @@ class AdminDisputeDetailView(APIView):
             final_confidence = dispute.original_confidence
             final_summary = ""
         
-        # ====== SEND EMAIL NOTIFICATION ======
+        # Beri tahu pelapor
         email_sent = False
         if dispute.reporter_email:
             try:
@@ -1005,7 +1005,7 @@ class AdminDisputeDetailView(APIView):
         
         logger.info(f"[REJECT] Dispute {dispute.id} status updated to REJECTED")
         
-        # ====== SEND EMAIL NOTIFICATION ======
+        # Beri tahu pelapor
         email_sent = False
         if dispute.reporter_email:
             try:

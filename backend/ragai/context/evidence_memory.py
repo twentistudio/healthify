@@ -1,26 +1,15 @@
 """
 Ingatan bukti untuk satu percakapan (§9, §10).
 
-Kenapa modul ini ada
---------------------
-Di dalam sebuah ruang obrolan, satu topik dibahas lewat banyak gelembung
-pesan. Bila setiap pertanyaan lanjutan mengulang pencarian dari nol, jurnal
-yang terpilih bisa berganti-ganti antar giliran, dan pengguna melihat jawaban
-yang seolah berubah pendirian untuk pembahasan yang sama. Padahal yang berubah
-hanya urutan pencarian.
+Satu topik dibahas lewat banyak gelembung pesan. Mengulang pencarian pada tiap
+pertanyaan membuat jurnal yang terpilih berganti antar giliran, sehingga
+jawaban tampak berubah pendirian untuk pembahasan yang sama.
 
-Aturannya mengikuti alur percakapan yang wajar:
+Alurnya: pertanyaan pertama mencari; pertanyaan lanjutan memakai jurnal yang
+sama selama masih menjawab; di luar itu pencarian dijalankan lagi.
 
-1. Pertanyaan pertama selalu mencari jurnal lewat RAG.
-2. Pertanyaan berikutnya diperiksa dulu. Bila masih terjawab oleh jurnal yang
-   sudah dipakai di percakapan ini, jurnal itulah yang dipakai kembali —
-   jawabannya tetap bersandar pada rujukan yang sama.
-3. Bila pertanyaannya sudah di luar jangkauan jurnal tersebut, pencarian
-   dijalankan lagi.
-
-Yang disimpan hanyalah pengenal barisnya (`journal:12`, `source:34`), bukan
-salinan isinya, sehingga judul dan metadata selalu dibaca ulang dari sumber
-aslinya dan tidak pernah basi.
+Yang disimpan hanya pengenal barisnya, bukan salinan isinya, sehingga judul dan
+metadata selalu dibaca ulang dari sumber aslinya.
 """
 
 import json
@@ -29,6 +18,7 @@ import re
 from typing import List, Optional
 
 from ..contracts import EvidenceItem, EvidenceOrigin
+from .. import runtime
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +84,8 @@ def _load_items(source_ids: List[str]) -> List[EvidenceItem]:
     order = {sid: i for i, sid in enumerate(source_ids)}
 
     try:
-        from ...models import JournalArticle, Source
+        JournalArticle = runtime.model("JournalArticle")
+        Source = runtime.model("Source")
 
         if journal_ids:
             for row in JournalArticle.objects.filter(id__in=journal_ids):
@@ -145,24 +136,14 @@ def can_answer_from_memory(query: str, pooled: List[EvidenceItem]) -> bool:
     """
     Apakah pertanyaan ini masih terjawab oleh jurnal yang sudah dipakai.
 
-    Yang diperiksa adalah pertanyaan ASLI pengguna, bukan query yang sudah
-    diperkaya konteks percakapan. Query yang diperkaya sengaja membawa topik
-    sebelumnya, sehingga memakainya di sini selalu menghasilkan jawaban "masih
-    tercakup" dan percakapan tidak pernah bisa berpindah topik.
+    Diperiksa dari pertanyaan asli, bukan query yang diperkaya konteks: yang
+    diperkaya selalu membawa topik lama sehingga percakapan tidak pernah bisa
+    berpindah.
 
-    Dua keadaan dibedakan:
-
-    * Pertanyaan menyebut penyakit. Itu penentunya: bila penyakit tersebut
-      tidak dibahas jurnal yang ada, pembahasan sudah berpindah dan pencarian
-      baru harus dijalankan, meskipun kalimatnya masih di ruang obrolan yang
-      sama ("kalau asam urat bagaimana").
-
-    * Pertanyaan tidak menyebut penyakit apa pun. Ini lanjutan wajar dari
-      pembahasan berjalan ("apa gejalanya", "berapa lama sembuhnya"), dan
-      dijawab dari jurnal yang sama. Pengecualiannya: bila pertanyaan memuat
-      kata yang tidak dikenali kosakata kesehatan dan juga tidak muncul di
-      jurnal tersebut, kemungkinan besar itu penyakit yang belum tercatat di
-      leksikon, jadi diperlakukan sebagai topik baru.
+    Bila pertanyaan menyebut penyakit, itulah penentunya. Bila tidak, ini
+    lanjutan wajar dan dijawab dari jurnal yang sama, kecuali ada kata tak
+    dikenal yang juga tidak muncul di jurnal itu — kemungkinan penyakit yang
+    belum tercatat di leksikon.
     """
     if not pooled:
         return False

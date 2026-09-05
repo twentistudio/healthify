@@ -18,8 +18,8 @@ def _public_base_url(request) -> str:
     """
     Alamat publik engine.
 
-    Skema diambil dari header proxy karena TLS diterminasi di depan; tanpa itu
-    contoh perintah di halaman ini akan tertulis http:// pada halaman https://.
+    Skema dari header proxy, sebab TLS diterminasi di depan dan contoh perintah
+    akan tertulis http:// pada halaman https://.
     """
     configured = getattr(settings, "PUBLIC_API_BASE_URL", "")
     if configured.startswith(("http://", "https://")):
@@ -35,9 +35,8 @@ def _journal_count() -> str:
     """
     Jumlah jurnal di knowledge base, dibulatkan ke bawah ke ratusan terdekat.
 
-    Angka pastinya berubah setiap kali engine melengkapi dirinya sendiri, dan
-    menampilkan angka yang bergerak-gerak di halaman muka justru terbaca seperti
-    hitungan yang dikarang. Pembulatan menjaga klaimnya tetap benar.
+    Angka pastinya berubah tiap kali engine melengkapi dirinya sendiri.
+    Pembulatan menjaga klaimnya tetap benar.
     """
     try:
         from .models import JournalArticle

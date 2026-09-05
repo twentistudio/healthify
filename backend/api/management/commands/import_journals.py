@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 import requests
 from django.core.management.base import BaseCommand
 
-from api.intelligence.evidence import link_validator as lv
+from ragai.evidence import link_validator as lv
 from api.models import JournalArticle
 
 CROSSREF_API = "https://api.crossref.org/works"

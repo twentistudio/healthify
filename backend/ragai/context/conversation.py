@@ -1,5 +1,5 @@
 """
-Conversation context (§9).
+Conversation context.
 
 Engine harus memahami pesan sebagai bagian dari sebuah percakapan, bukan query
 independen. Modul ini:
@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ..contracts import HealthContext, Intent
 from .extractor import context_terms, extract_health_context, health_context_from_dict
+from .. import runtime
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +30,9 @@ def storage_key(consumer: str, conversation_id: str) -> str:
     """
     Kunci penyimpanan sesi, dipisah per consumer.
 
-    Pengenal ruang obrolan dibuat oleh produk lain, dan dua produk bisa
-    sama-sama memakai "room-1" tanpa saling tahu. Tanpa pemisahan ini percakapan
-    milik satu produk akan terbaca oleh produk lain — kebocoran yang tidak
-    kentara justru karena tampak "berfungsi".
-
-    Yang dikembalikan ke consumer tetap pengenal aslinya; awalan ini hanya
-    hidup di dalam basis data.
+    Dua produk bisa sama-sama memakai "room-1" tanpa saling tahu, dan tanpa
+    pemisahan ini percakapan yang satu terbaca oleh yang lain. Awalannya hanya
+    hidup di basis data; consumer tetap menerima pengenal aslinya.
     """
     consumer = (consumer or "healthify").strip() or "healthify"
     return f"{consumer}:{conversation_id}"
@@ -83,9 +80,8 @@ def public_conversation_id(session) -> str:
     """
     Pengenal ruang obrolan sebagaimana consumer mengenalnya.
 
-    Awalan consumer adalah urusan internal penyimpanan. Membocorkannya ke
-    payload membuat consumer menerima pengenal yang berbeda dari yang mereka
-    kirim, dan kalau dipakai kembali akan menunjuk sesi yang salah.
+    Awalan consumer urusan internal. Membocorkannya membuat consumer menerima
+    pengenal berbeda dari yang mereka kirim.
     """
     raw = getattr(session, "session_id", "") or ""
     prefix = f"{getattr(session, 'consumer', '') or ''}:"
@@ -96,14 +92,13 @@ def find_session(conversation_id: str, consumer: str = "healthify"):
     """
     Temukan sesi milik satu consumer.
 
-    Satu-satunya tempat yang tahu bagaimana pengenal ruang obrolan dipetakan
-    ke baris di basis data. Semua pemanggil memakai ini, sehingga penamaan
-    kunci tidak pernah tersebar dan tidak bisa berbeda-beda antar endpoint.
+    Satu-satunya tempat yang tahu bagaimana pengenal ruang obrolan dipetakan ke
+    baris, sehingga penamaannya tidak tersebar antar endpoint.
     """
     if not conversation_id:
         return None
     try:
-        from ...models import ConversationSession
+        ConversationSession = runtime.model("ConversationSession")
 
         return (
             ConversationSession.objects.filter(
@@ -236,7 +231,8 @@ def persist_turn(conversation_id: Optional[str],
     if not conversation_id:
         return None
     try:
-        from ...models import ConversationMessage, ConversationSession
+        ConversationMessage = runtime.model("ConversationMessage")
+        ConversationSession = runtime.model("ConversationSession")
 
         # Sesi dibuat sendiri saat pertama kali dipakai. Konsumen tidak perlu
         # mendaftarkan ruang obrolan lebih dulu: cukup kirim pengenal miliknya.

@@ -22,10 +22,10 @@ from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
-from .intelligence import engine
-from .intelligence.adapters.healthtalk import to_consumer_response, to_simple_response
-from .intelligence.contracts import Mode
-from .intelligence.summarization.summarizer import build_summary, persist_summary
+from ragai import engine
+from ragai.adapters.healthtalk import to_consumer_response, to_simple_response
+from ragai.contracts import Mode
+from ragai.summarization.summarizer import build_summary, persist_summary
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +102,9 @@ def _database_keys_exist() -> bool:
     """
     Apakah ada kunci aktif di database.
 
-    Dipisah agar endpoint tidak berubah menjadi terbuka ketika variabel
-    lingkungan kosong padahal kunci sudah diterbitkan lewat `issue_api_key`.
-    Kegagalan database dibaca sebagai "tidak ada", supaya masalah penyimpanan
-    tidak berubah menjadi celah autentikasi terbuka; permintaan tanpa kunci
-    tetap ditolak selama variabel lingkungan terisi.
+    Menjaga endpoint tidak menjadi terbuka ketika variabel lingkungan kosong
+    padahal kunci sudah diterbitkan. Kegagalan basis data dibaca sebagai "tidak
+    ada" agar tidak berubah menjadi celah autentikasi.
     """
     from .models import IntelligenceApiKey
 
@@ -164,10 +162,8 @@ def resolve_consumer(request):
     configured = getattr(settings, "INTELLIGENCE_API_KEYS", None) or {}
     api_key = request.META.get("HTTP_X_API_KEY", "").strip()
 
-    # Kunci boleh berasal dari dua tempat: variabel lingkungan (cara lama, tetap
-    # berlaku) dan tabel `IntelligenceApiKey` yang diisi `issue_api_key`. Tabel
-    # memungkinkan satu konsumen memegang banyak kunci sekaligus dan mencabut
-    # satu tanpa mematikan yang lain.
+    # Kunci datang dari variabel lingkungan maupun tabel `IntelligenceApiKey`;
+    # keduanya berlaku berdampingan.
     if configured or _database_keys_exist():
         if not api_key:
             return None, Response(
@@ -317,7 +313,7 @@ class ConsultationSummaryView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from .intelligence.context.conversation import find_session
+        from ragai.context.conversation import find_session
 
         # Sesi dicari lewat pembantu bersama, sehingga endpoint ini tidak perlu
         # tahu bagaimana pengenal ruang obrolan dipetakan ke baris, dan satu
@@ -365,7 +361,7 @@ class ConversationSessionView(APIView):
         if error:
             return error
 
-        from .intelligence.context.conversation import find_session
+        from ragai.context.conversation import find_session
 
         # Sesi dicari lewat pembantu bersama, sehingga endpoint ini tidak perlu
         # tahu bagaimana pengenal ruang obrolan dipetakan ke baris, dan satu
@@ -411,7 +407,7 @@ class ConversationSessionView(APIView):
         if error:
             return error
 
-        from .intelligence.context.conversation import find_session
+        from ragai.context.conversation import find_session
 
         # Sesi dicari lewat pembantu bersama, sehingga endpoint ini tidak perlu
         # tahu bagaimana pengenal ruang obrolan dipetakan ke baris, dan satu
@@ -439,9 +435,9 @@ class IntelligenceCapabilitiesView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        from .intelligence.contracts import EvidenceStatus, Intent, Provenance, SafetyDecision
-        from .intelligence.engine import ENGINE_VERSION
-        from .intelligence.reasoning import llm
+        from ragai.contracts import EvidenceStatus, Intent, Provenance, SafetyDecision
+        from ragai.engine import ENGINE_VERSION
+        from ragai.reasoning import llm
 
         return Response(
             {
@@ -475,8 +471,7 @@ class AccessRequestThrottle(SimpleRateThrottle):
     """
     Batasi permintaan akses per alamat IP.
 
-    Endpoint ini terbuka tanpa kunci (memang untuk orang yang belum punya
-    kunci), jadi tanpa pembatasan ia menjadi sasaran empuk pengiriman massal.
+    Endpoint ini terbuka tanpa kunci, jadi rawan pengiriman massal.
     """
 
     scope = "access_request"
@@ -489,10 +484,9 @@ class AccessRequestView(APIView):
     """
     POST /api/v1/intelligence/access-request
 
-    Formulir permintaan akses dari halaman dokumentasi. Menyimpan permintaan
-    untuk ditinjau manusia; TIDAK menerbitkan kunci apa pun. Kunci diterbitkan
-    operator dengan `python manage.py issue_api_key`, sehingga pengisi formulir
-    tidak pernah bisa memberi akses kepada dirinya sendiri.
+    Menyimpan permintaan untuk ditinjau manusia; tidak menerbitkan kunci apa
+    pun, sehingga pengisi formulir tidak bisa memberi akses kepada dirinya
+    sendiri.
     """
 
     permission_classes = [AllowAny]

@@ -3,14 +3,12 @@ Audit tautan sumber yang SUDAH ada di database.
 
 Dua hal diperiksa, dan keduanya berbeda:
 
-1. **Apakah DOI/URL dapat dijangkau.** Menangkap tautan mati dan DOI karangan
-   yang tidak pernah terdaftar.
+1. Apakah DOI/URL dapat dijangkau, untuk menangkap tautan mati dan DOI
+   karangan.
 
-2. **Apakah JUDUL tersimpan benar-benar milik DOI tersebut.** Ini pemeriksaan
-   yang lebih dalam dan sama pentingnya. Judul yang meyakinkan bisa dipasangkan
-   dengan DOI yang kebetulan nyata tetapi milik paper lain, sehingga pembaca
-   membuka halaman yang sama sekali berbeda dari judul yang diklik. Pemeriksaan
-   nomor 1 meloloskan kasus ini karena DOI-nya memang ada.
+2. Apakah judul tersimpan benar-benar milik DOI itu. Judul meyakinkan bisa
+   dipasangkan dengan DOI yang nyata tetapi milik paper lain, dan pemeriksaan
+   pertama meloloskannya.
 
 Registry adalah satu-satunya otoritas untuk judul sebuah DOI.
 
@@ -25,7 +23,7 @@ import time
 
 from django.core.management.base import BaseCommand
 
-from api.intelligence.evidence import link_validator as lv
+from ragai.evidence import link_validator as lv
 from api.models import JournalArticle, Source
 
 
@@ -147,17 +145,9 @@ class Command(BaseCommand):
         if not fix:
             return
 
-        # Pasangan (judul, DOI) yang tidak cocok berarti keduanya tidak dapat
-        # dipercaya mewakili bukti apa pun. Ada dua penanganan:
-        #
-        #   --drop-mismatched : buang DOI/URL-nya. Baris berhenti menjadi bukti,
-        #       dan klaim yang kehilangan seluruh sumbernya akan diturunkan oleh
-        #       `revalidate_claims`. Ini yang benar untuk data karangan LLM:
-        #       mengganti judulnya hanya menghasilkan sitasi yang jujur tetapi
-        #       tidak relevan dengan klaimnya.
-        #
-        #   default : ganti judul dengan judul resmi registry. Aman dan tidak
-        #       merusak, tautan dan judul akhirnya sesuai.
+        # Dua penanganan: --drop-mismatched membuang DOI/URL-nya, tepat untuk
+        # data karangan LLM karena mengganti judul hanya menghasilkan sitasi
+        # jujur yang tidak relevan. Bawaannya mengambil judul resmi registry.
         if self.drop_mismatched:
             row.doi = None
             row.url = None

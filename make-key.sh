@@ -12,14 +12,12 @@
 #   ./make-key.sh --limit 5          layani lima permintaan terlama saja
 #   ./make-key.sh --rate 120/min     beri batas laju khusus
 #
-# Aman dijalankan berulang. Yang menentukan bukan status permintaan melainkan
-# ada-tidaknya kunci yang pernah diterbitkan untuknya, sehingga menjalankan ini
-# dua kali tidak menghasilkan kunci ganda, dan kunci yang sengaja dicabut tidak
-# akan terbit lagi diam-diam.
+# Aman dijalankan berulang: penentunya ada-tidaknya kunci yang pernah
+# diterbitkan, jadi tidak ada kunci ganda dan kunci yang dicabut tidak terbit
+# lagi.
 #
-# Kerja sesungguhnya ada di perintah Django `issue_pending_keys`. Berkas ini
-# sengaja tipis: logika yang menyentuh basis data dan mengirim surat perlu bisa
-# diuji, dan itu tidak mungkin bila ditulis sebagai rangkaian perintah bash.
+# Kerjanya ada di perintah Django `issue_pending_keys`; berkas ini sengaja tipis
+# karena logika yang menyentuh basis data dan surat perlu bisa diuji.
 #
 # Menjalankannya terjadwal, misalnya tiap sepuluh menit:
 #   */10 * * * * cd /home/client-twenti/Healtify-App && ./make-key.sh >> logs/make-key.log 2>&1

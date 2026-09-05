@@ -680,7 +680,7 @@ class TranslateAndDuplicateTests(TestCase):
         }
 
         with patch("api.views.get_gemini_client", return_value=None), \
-             patch("api.intelligence.reasoning.llm.generate", return_value=None):
+             patch("ragai.reasoning.llm.generate", return_value=None):
             resp = self.client.post(url, data=payload, format="json")
 
         self.assertEqual(resp.status_code, 200)
@@ -707,7 +707,7 @@ class TranslateAndDuplicateTests(TestCase):
         }
 
         with patch("api.views.get_gemini_client", return_value=None), \
-             patch("api.intelligence.reasoning.llm.generate",
+             patch("ragai.reasoning.llm.generate",
                    return_value="This summary is long enough to pass the threshold."):
             resp = self.client.post(url, data=payload, format="json")
 
@@ -1454,7 +1454,7 @@ class AiAdapterUnitTests(TestCase):
                 }
 
         with patch("api.ai_adapter.get_optimized_module", return_value=DummyModule()), \
-             patch("api.intelligence.evidence.link_validator.resolve_doi",
+             patch("ragai.evidence.link_validator.resolve_doi",
                    return_value="verified"):
             result = ai_adapter.call_ai_verify_direct_optimized("Klaim contoh")
         self.assertEqual(result["label"], "valid")
@@ -1505,7 +1505,7 @@ class AiAdapterUnitTests(TestCase):
 
         doi = "10.1016/j.lungcan.2019.05.012"
 
-        with patch("api.intelligence.evidence.link_validator.resolve_doi",
+        with patch("ragai.evidence.link_validator.resolve_doi",
                    return_value="verified"):
             hoax = normalize_ai_response(
                 {"label": "false", "confidence": 80, "summary": "s",
@@ -1527,7 +1527,7 @@ class AiAdapterUnitTests(TestCase):
         """DOI karangan tidak boleh lolos menjadi sumber (regresi anti-404)."""
         from api.ai_adapter import normalize_ai_response
 
-        with patch("api.intelligence.evidence.link_validator.resolve_doi",
+        with patch("ragai.evidence.link_validator.resolve_doi",
                    return_value="unresolvable"):
             result = normalize_ai_response(
                 {"label": "valid", "confidence": 90, "summary": "s",
@@ -1543,14 +1543,14 @@ class AiAdapterUnitTests(TestCase):
     def test_extract_sources_filters_and_sorts(self):
         from api.ai_adapter import extract_sources
 
-        with patch("api.intelligence.evidence.link_validator.check_url",
+        with patch("ragai.evidence.link_validator.check_url",
                    return_value=("unresolvable", "")):
             sources = extract_sources({"sources": [{"url": "https://bad"}]})
         self.assertEqual(sources, [])
 
         doi_a = "10.1016/j.aaa.2020.01.001"
         doi_b = "10.1016/j.bbb.2020.01.002"
-        with patch("api.intelligence.evidence.link_validator.resolve_doi",
+        with patch("ragai.evidence.link_validator.resolve_doi",
                    return_value="verified"):
             sources = extract_sources(
                 {
@@ -1749,7 +1749,7 @@ class LabelPromotionGuardTests(TestCase):
     def _normalize(self, label, confidence):
         from api.ai_adapter import normalize_ai_response
 
-        with patch("api.intelligence.evidence.link_validator.resolve_doi",
+        with patch("ragai.evidence.link_validator.resolve_doi",
                    return_value="verified"):
             return normalize_ai_response(
                 {

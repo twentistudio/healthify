@@ -5,9 +5,8 @@ Ditempatkan di modul tersendiri tanpa dependensi agar dapat dipakai baik oleh
 `models.py` (sebagai default field) maupun oleh lapisan mesin, tanpa membuat
 lingkaran impor.
 
-Naikkan setiap kali retrieval, pemeringkatan, atau penilaian label berubah
-secara berarti. Hasil verifikasi yang tersimpan dengan versi lebih lama tidak
-disajikan dari cache, melainkan diverifikasi ulang oleh mesin terkini.
+Dinaikkan setiap kali retrieval, pemeringkatan, atau penilaian label berubah
+berarti. Hasil dengan versi lebih lama tidak disajikan dari cache.
 
 Riwayat:
     v2.0  verifikasi berbasis LLM tanpa pemeriksaan relevansi topikal.

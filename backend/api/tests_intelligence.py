@@ -69,7 +69,7 @@ def make_journal(**kwargs):
 
 class QueryUnderstandingTests(TestCase):
     def _intent(self, query, **kwargs):
-        from .intelligence.query_understanding.classifier import classify_intent
+        from ragai.query_understanding.classifier import classify_intent
         return classify_intent(query, **kwargs).intent.value
 
     def test_claim_verification_intent(self):
@@ -131,8 +131,8 @@ class QueryUnderstandingTests(TestCase):
         self.assertEqual(self._intent(""), "UNSUPPORTED")
 
     def test_mode_biases_but_does_not_override_symptoms(self):
-        from .intelligence.contracts import Mode
-        from .intelligence.query_understanding.classifier import classify_intent
+        from ragai.contracts import Mode
+        from ragai.query_understanding.classifier import classify_intent
 
         result = classify_intent("Saya demam tiga hari", mode=Mode.CONSULTATION)
         self.assertEqual(result.intent.value, "SYMPTOM_CONTEXT")
@@ -144,7 +144,7 @@ class QueryUnderstandingTests(TestCase):
 
 class HealthContextExtractionTests(TestCase):
     def test_extracts_symptoms_and_duration(self):
-        from .intelligence.context.extractor import extract_health_context
+        from ragai.context.extractor import extract_health_context
 
         ctx = extract_health_context("Saya demam dan batuk sudah tiga hari")
         self.assertIn("demam", ctx.symptoms)
@@ -153,7 +153,7 @@ class HealthContextExtractionTests(TestCase):
         self.assertEqual(ctx.chief_complaint, "demam")
 
     def test_numeric_and_word_durations(self):
-        from .intelligence.context.extractor import extract_duration
+        from ragai.context.extractor import extract_duration
 
         self.assertEqual(extract_duration("sudah 5 hari"), "5 hari")
         self.assertEqual(extract_duration("sejak dua minggu lalu"), "2 minggu")
@@ -163,7 +163,7 @@ class HealthContextExtractionTests(TestCase):
 
     def test_does_not_invent_unreported_fields(self):
         """Field yang tidak disebut user WAJIB tetap None / kosong (§8)."""
-        from .intelligence.context.extractor import extract_health_context
+        from ragai.context.extractor import extract_health_context
 
         ctx = extract_health_context("Saya demam")
         self.assertIsNone(ctx.duration)
@@ -175,7 +175,7 @@ class HealthContextExtractionTests(TestCase):
         self.assertEqual(ctx.relevant_history, [])
 
     def test_severity_onset_progression(self):
-        from .intelligence.context.extractor import extract_health_context
+        from ragai.context.extractor import extract_health_context
 
         ctx = extract_health_context(
             "Nyeri perut saya tiba-tiba muncul, terasa sangat parah dan makin parah"
@@ -185,7 +185,7 @@ class HealthContextExtractionTests(TestCase):
         self.assertEqual(ctx.progression, "memburuk")
 
     def test_medications_and_allergies(self):
-        from .intelligence.context.extractor import extract_health_context
+        from ragai.context.extractor import extract_health_context
 
         ctx = extract_health_context("Saya minum paracetamol dan alergi amoxicillin")
         self.assertTrue(any("paracetamol" in m for m in ctx.medications))
@@ -193,7 +193,7 @@ class HealthContextExtractionTests(TestCase):
 
     def test_symptom_accumulation_across_turns(self):
         """'Saya demam' + 'sudah tiga hari' -> duration(demam) = 3 hari (§9)."""
-        from .intelligence.context.extractor import extract_health_context
+        from ragai.context.extractor import extract_health_context
 
         ctx = extract_health_context("Saya demam")
         self.assertIsNone(ctx.duration)
@@ -209,7 +209,7 @@ class HealthContextExtractionTests(TestCase):
         self.assertEqual(ctx.duration, "3 hari")
 
     def test_provenance_marks_user_reported(self):
-        from .intelligence.context.extractor import extract_health_context
+        from ragai.context.extractor import extract_health_context
 
         ctx = extract_health_context("Saya demam tiga hari")
         self.assertEqual(ctx.provenance.get("symptoms"), "USER_REPORTED")
@@ -219,12 +219,12 @@ class HealthContextExtractionTests(TestCase):
 class ConversationContextTests(TestCase):
     def test_effective_query_resolves_reference(self):
         """'Apakah itu normal?' harus membawa konteks demam 3 hari."""
-        from .intelligence.context.conversation import (
+        from ragai.context.conversation import (
             build_effective_query,
             load_state,
             rebuild_context_from_history,
         )
-        from .intelligence.contracts import Intent
+        from ragai.contracts import Intent
 
         state = load_state(
             conversation_id=None,
@@ -241,8 +241,8 @@ class ConversationContextTests(TestCase):
         self.assertIn("3 hari", effective.lower())
 
     def test_persist_and_reload_session(self):
-        from .intelligence.context.conversation import load_state, persist_turn
-        from .intelligence.contracts import HealthContext
+        from ragai.context.conversation import load_state, persist_turn
+        from ragai.contracts import HealthContext
 
         context = HealthContext(chief_complaint="demam", symptoms=["demam"], duration="3 hari")
         persist_turn(
@@ -258,8 +258,8 @@ class ConversationContextTests(TestCase):
         self.assertIn("demam", state.health_context.symptoms)
 
     def test_persist_turn_without_conversation_id_is_noop(self):
-        from .intelligence.context.conversation import persist_turn
-        from .intelligence.contracts import HealthContext
+        from ragai.context.conversation import persist_turn
+        from ragai.contracts import HealthContext
 
         self.assertIsNone(persist_turn(None, "healthtalk", "a", "b", HealthContext()))
         self.assertEqual(ConversationSession.objects.count(), 0)
@@ -271,7 +271,7 @@ class ConversationContextTests(TestCase):
 
 class LinkValidationTests(TestCase):
     def test_normalize_doi_strips_prefixes(self):
-        from .intelligence.evidence.link_validator import normalize_doi
+        from ragai.evidence.link_validator import normalize_doi
 
         target = "10.1016/j.jinf.2021.02.004"
         for raw in (
@@ -284,7 +284,7 @@ class LinkValidationTests(TestCase):
             self.assertEqual(normalize_doi(raw), target, raw)
 
     def test_malformed_doi_rejected_without_network(self):
-        from .intelligence.evidence.link_validator import looks_like_doi, resolve_doi
+        from ragai.evidence.link_validator import looks_like_doi, resolve_doi
 
         self.assertFalse(looks_like_doi("10.1/x"))
         self.assertFalse(looks_like_doi("not-a-doi"))
@@ -294,7 +294,7 @@ class LinkValidationTests(TestCase):
 
     def test_unresolvable_doi_is_dropped_entirely(self):
         """DOI yang tidak terdaftar tidak boleh keluar sebagai link (404 guard)."""
-        from .intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         with patch.object(lv, "resolve_doi", return_value=lv.STATUS_UNRESOLVABLE):
             result = lv.validate_reference("10.9999/karangan-model", "")
@@ -305,7 +305,7 @@ class LinkValidationTests(TestCase):
         self.assertEqual(result["link_status"], "unresolvable")
 
     def test_verified_doi_becomes_link(self):
-        from .intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         with patch.object(lv, "resolve_doi", return_value=lv.STATUS_VERIFIED):
             result = lv.validate_reference("10.1016/j.jinf.2021.02.004", "")
@@ -315,7 +315,7 @@ class LinkValidationTests(TestCase):
 
     def test_unknown_status_never_emits_link_for_untrusted_source(self):
         """Saat status tidak bisa dipastikan, lebih baik tanpa link daripada link mati."""
-        from .intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         with patch.object(lv, "resolve_doi", return_value=lv.STATUS_UNKNOWN):
             untrusted = lv.validate_reference("10.1016/j.jinf.2021.02.004", "",
@@ -328,7 +328,7 @@ class LinkValidationTests(TestCase):
         self.assertTrue(trusted["url"].startswith("https://doi.org/"))
 
     def test_dead_url_is_dropped(self):
-        from .intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         with patch.object(lv, "check_url", return_value=(lv.STATUS_UNRESOLVABLE, "")):
             result = lv.validate_reference("", "https://example.com/hilang")
@@ -337,7 +337,7 @@ class LinkValidationTests(TestCase):
 
 class EvidenceSelectorTests(TestCase):
     def _item(self, **kwargs):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
         defaults = {
             "chunk_id": "c1", "source_id": "s1", "title": "Studi demam",
             "snippet": "Randomized controlled trial mengenai demam dan batuk.",
@@ -348,16 +348,16 @@ class EvidenceSelectorTests(TestCase):
         return EvidenceItem(**defaults)
 
     def test_model_suggested_source_is_not_publishable(self):
-        from .intelligence.contracts import EvidenceOrigin
+        from ragai.contracts import EvidenceOrigin
 
         item = self._item(origin=EvidenceOrigin.MODEL_SUGGESTED,
                           doi="10.9999/karangan", doi_verified=False)
         self.assertFalse(item.is_publishable())
 
     def test_model_suggested_promoted_when_doi_verified(self):
-        from .intelligence.contracts import EvidenceOrigin
-        from .intelligence.evidence import link_validator as lv
-        from .intelligence.evidence.selector import validate_links
+        from ragai.contracts import EvidenceOrigin
+        from ragai.evidence import link_validator as lv
+        from ragai.evidence.selector import validate_links
 
         item = self._item(origin=EvidenceOrigin.MODEL_SUGGESTED,
                           doi="10.1016/j.jinf.2021.02.004")
@@ -368,9 +368,9 @@ class EvidenceSelectorTests(TestCase):
         self.assertTrue(validated[0].is_publishable())
 
     def test_selection_drops_unresolvable_and_reports_insufficient(self):
-        from .intelligence.contracts import EvidenceStatus
-        from .intelligence.evidence import link_validator as lv
-        from .intelligence.evidence.selector import select_evidence
+        from ragai.contracts import EvidenceStatus
+        from ragai.evidence import link_validator as lv
+        from ragai.evidence.selector import select_evidence
 
         items = [self._item(doi="10.9999/palsu-1"), self._item(doi="10.9999/palsu-2")]
         with patch.object(lv, "resolve_doi", return_value=lv.STATUS_UNRESOLVABLE):
@@ -380,15 +380,15 @@ class EvidenceSelectorTests(TestCase):
         self.assertEqual(status, EvidenceStatus.INSUFFICIENT_EVIDENCE)
 
     def test_no_evidence_is_insufficient(self):
-        from .intelligence.contracts import EvidenceStatus
-        from .intelligence.evidence.selector import select_evidence
+        from ragai.contracts import EvidenceStatus
+        from ragai.evidence.selector import select_evidence
 
         selected, status = select_evidence([])
         self.assertEqual(selected, [])
         self.assertEqual(status, EvidenceStatus.INSUFFICIENT_EVIDENCE)
 
     def test_quality_scoring_prefers_recent_high_grade_evidence(self):
-        from .intelligence.evidence.quality import (
+        from ragai.evidence.quality import (
             score_evidence_type,
             score_recency,
             score_source_quality,
@@ -425,15 +425,15 @@ class RetrievalTests(TestCase):
         )
 
     def test_retrieves_relevant_evidence(self):
-        from .intelligence.retrieval.retriever import retrieve_candidates
+        from ragai.retrieval.retriever import retrieve_candidates
 
         results = retrieve_candidates("demam dan batuk tiga hari")
         self.assertTrue(results)
         self.assertIn("respiratory", results[0].title.lower())
 
     def test_irrelevant_query_returns_nothing_relevant(self):
-        from .intelligence.evidence.selector import select_evidence
-        from .intelligence.retrieval.retriever import retrieve_candidates
+        from ragai.evidence.selector import select_evidence
+        from ragai.retrieval.retriever import retrieve_candidates
 
         candidates = retrieve_candidates("patah tulang selangka akibat jatuh dari sepeda")
         selected, status = select_evidence(candidates, limit=5)
@@ -441,9 +441,9 @@ class RetrievalTests(TestCase):
         self.assertNotIn("statin", titles)
 
     def test_empty_knowledge_base_returns_no_evidence(self):
-        from .intelligence.contracts import EvidenceStatus
-        from .intelligence.evidence.selector import select_evidence
-        from .intelligence.retrieval.retriever import retrieve_candidates
+        from ragai.contracts import EvidenceStatus
+        from ragai.evidence.selector import select_evidence
+        from ragai.retrieval.retriever import retrieve_candidates
 
         JournalArticle.objects.all().delete()
         candidates = retrieve_candidates("demam dan batuk")
@@ -453,7 +453,7 @@ class RetrievalTests(TestCase):
 
     def test_retrieves_from_existing_claim_sources(self):
         """Knowledge base lama (Source/ClaimSource) tetap dipakai (§10, §22)."""
-        from .intelligence.retrieval.retriever import retrieve_from_sources
+        from ragai.retrieval.retriever import retrieve_from_sources
 
         claim = Claim.objects.create(text="Merokok menyebabkan kanker paru")
         source = Source.objects.create(
@@ -471,7 +471,7 @@ class RetrievalTests(TestCase):
         self.assertEqual(results[0].source_id, f"source:{source.id}")
 
     def test_concept_extraction(self):
-        from .intelligence.retrieval.concepts import extract_health_concepts
+        from ragai.retrieval.concepts import extract_health_concepts
 
         concepts = extract_health_concepts("Saya demam dan batuk, apakah ini diabetes?")
         self.assertIn("demam", concepts)
@@ -486,7 +486,7 @@ class RetrievalTests(TestCase):
 @OFFLINE
 class GenerationTests(TestCase):
     def _evidence(self, n=2):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
         return [
             EvidenceItem(
                 chunk_id=f"c{i}", source_id=f"journal:{i}",
@@ -500,8 +500,8 @@ class GenerationTests(TestCase):
         ]
 
     def test_insufficient_evidence_never_calls_llm(self):
-        from .intelligence.contracts import EvidenceStatus, HealthContext, Intent
-        from .intelligence.reasoning import generator, llm
+        from ragai.contracts import EvidenceStatus, HealthContext, Intent
+        from ragai.reasoning import generator, llm
 
         with patch.object(llm, "generate") as mocked:
             answer, meta = generator.generate_response(
@@ -516,8 +516,8 @@ class GenerationTests(TestCase):
         self.assertIn("belum menemukan bukti", answer.lower())
 
     def test_extractive_fallback_is_grounded_in_evidence(self):
-        from .intelligence.contracts import EvidenceStatus, HealthContext, Intent
-        from .intelligence.reasoning.generator import generate_response
+        from ragai.contracts import EvidenceStatus, HealthContext, Intent
+        from ragai.reasoning.generator import generate_response
 
         answer, meta = generate_response(
             query="Saya demam tiga hari",
@@ -531,8 +531,8 @@ class GenerationTests(TestCase):
         self.assertIn("[E1]", answer)
 
     def test_partial_evidence_adds_uncertainty(self):
-        from .intelligence.contracts import EvidenceStatus, HealthContext, Intent
-        from .intelligence.reasoning.generator import generate_response
+        from ragai.contracts import EvidenceStatus, HealthContext, Intent
+        from ragai.reasoning.generator import generate_response
 
         answer, _ = generate_response(
             query="Saya demam", intent=Intent.SYMPTOM_CONTEXT,
@@ -543,7 +543,7 @@ class GenerationTests(TestCase):
 
     def test_fabricated_doi_in_llm_text_is_stripped(self):
         """DOI/URL yang ditulis LLM tapi tidak ada di evidence harus dibuang."""
-        from .intelligence.reasoning.generator import _strip_fabricated_references
+        from ragai.reasoning.generator import _strip_fabricated_references
 
         evidence = self._evidence(1)
         evidence[0].doi = "10.1016/j.jinf.2021.02.004"
@@ -561,8 +561,8 @@ class GenerationTests(TestCase):
         self.assertIn("10.1016/j.jinf.2021.02.004", cleaned)
 
     def test_unsupported_topic_returns_scope_message(self):
-        from .intelligence.contracts import EvidenceStatus, HealthContext, Intent
-        from .intelligence.reasoning.generator import generate_response
+        from ragai.contracts import EvidenceStatus, HealthContext, Intent
+        from ragai.reasoning.generator import generate_response
 
         answer, meta = generate_response(
             query="Bagaimana cara trading bitcoin?", intent=Intent.UNSUPPORTED,
@@ -575,7 +575,7 @@ class GenerationTests(TestCase):
 
 class ClaimProvenanceTests(TestCase):
     def _evidence(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
         return [EvidenceItem(
             chunk_id="c1", source_id="journal:1",
             title="Merokok dan kanker paru",
@@ -586,7 +586,7 @@ class ClaimProvenanceTests(TestCase):
         )]
 
     def test_supported_sentence_is_attributed(self):
-        from .intelligence.evidence.provenance import attribute_claims
+        from ragai.evidence.provenance import attribute_claims
 
         answer = "Merokok meningkatkan risiko kanker paru secara signifikan pada perokok aktif."
         claims = attribute_claims(answer, self._evidence())
@@ -597,14 +597,14 @@ class ClaimProvenanceTests(TestCase):
                          "10.1016/j.lungcan.2019.05.012")
 
     def test_unsupported_sentence_is_flagged(self):
-        from .intelligence.evidence.provenance import attribute_claims, unsupported_claims
+        from ragai.evidence.provenance import attribute_claims, unsupported_claims
 
         answer = "Konsumsi jahe merah setiap pagi terbukti menurunkan tekanan darah tinggi."
         claims = attribute_claims(answer, self._evidence())
         self.assertTrue(unsupported_claims(claims))
 
     def test_disclaimer_sentences_are_not_treated_as_claims(self):
-        from .intelligence.evidence.provenance import attribute_claims
+        from ragai.evidence.provenance import attribute_claims
 
         answer = "Konsultasikan dengan dokter untuk penanganan yang tepat."
         self.assertEqual(attribute_claims(answer, self._evidence()), [])
@@ -616,8 +616,8 @@ class ClaimProvenanceTests(TestCase):
 
 class SafetyTests(TestCase):
     def test_benign_information_passes(self):
-        from .intelligence.contracts import EvidenceStatus, SafetyDecision
-        from .intelligence.safety.validator import validate_response
+        from ragai.contracts import EvidenceStatus, SafetyDecision
+        from ragai.safety.validator import validate_response
 
         report = validate_response(
             answer="Minum air yang cukup membantu menjaga hidrasi tubuh.",
@@ -627,8 +627,8 @@ class SafetyTests(TestCase):
         self.assertEqual(report.decision, SafetyDecision.PASS)
 
     def test_emergency_signal_prepends_warning(self):
-        from .intelligence.contracts import SafetyDecision
-        from .intelligence.safety.validator import validate_response
+        from ragai.contracts import SafetyDecision
+        from ragai.safety.validator import validate_response
 
         report = validate_response(
             answer="Nyeri dada bisa disebabkan banyak hal.",
@@ -640,8 +640,8 @@ class SafetyTests(TestCase):
         self.assertTrue(report.answer.startswith("⚠️"))
 
     def test_dangerous_instruction_is_blocked(self):
-        from .intelligence.contracts import SafetyDecision
-        from .intelligence.safety.validator import validate_response
+        from ragai.contracts import SafetyDecision
+        from ragai.safety.validator import validate_response
 
         report = validate_response(
             answer="Anda bisa hentikan obat hipertensi Anda dan gandakan dosis vitamin.",
@@ -652,8 +652,8 @@ class SafetyTests(TestCase):
         self.assertIn("di luar cakupan", report.answer.lower())
 
     def test_diagnosis_certainty_is_softened(self):
-        from .intelligence.contracts import SafetyDecision
-        from .intelligence.safety.validator import validate_response
+        from ragai.contracts import SafetyDecision
+        from ragai.safety.validator import validate_response
 
         report = validate_response(
             answer="Anda menderita demam berdarah.",
@@ -665,7 +665,7 @@ class SafetyTests(TestCase):
         self.assertIn("bukan diagnosis", report.answer.lower())
 
     def test_dosage_recommendation_is_removed(self):
-        from .intelligence.safety.validator import validate_response
+        from ragai.safety.validator import validate_response
 
         report = validate_response(
             answer="Minum paracetamol 500 mg tiga kali sehari. Istirahat yang cukup juga membantu.",
@@ -676,7 +676,7 @@ class SafetyTests(TestCase):
         self.assertIn("apoteker", report.answer.lower())
 
     def test_high_risk_population_flagged(self):
-        from .intelligence.safety.validator import validate_response
+        from ragai.safety.validator import validate_response
 
         report = validate_response(
             answer="Demam ringan umumnya membaik sendiri.",
@@ -685,8 +685,8 @@ class SafetyTests(TestCase):
         self.assertTrue(report.has_flag("HIGH_RISK_POPULATION"))
 
     def test_insufficient_evidence_flagged(self):
-        from .intelligence.contracts import EvidenceStatus
-        from .intelligence.safety.validator import validate_response
+        from ragai.contracts import EvidenceStatus
+        from ragai.safety.validator import validate_response
 
         report = validate_response(
             answer="Bukti belum memadai.", user_input="Apakah X menyembuhkan Y?",
@@ -705,7 +705,7 @@ class EngineTests(TestCase):
         make_journal()
 
     def test_symptom_query_returns_structured_context_and_assessment(self):
-        from .intelligence import engine
+        from ragai import engine
 
         result = engine.process({
             "query": "Saya sudah demam tiga hari dan batuk.",
@@ -722,7 +722,7 @@ class EngineTests(TestCase):
         self.assertIn("BUKAN diagnosis", result.preliminary_assessment["disclaimer"])
 
     def test_multi_turn_accumulates_context(self):
-        from .intelligence import engine
+        from ragai import engine
 
         engine.process({"query": "Saya demam", "mode": "consultation",
                         "context": {"session_id": "HT-ENG-2"}}, consumer="healthtalk")
@@ -731,7 +731,7 @@ class EngineTests(TestCase):
 
         self.assertEqual(second.health_context.duration, "3 hari")
         self.assertIn("demam", second.health_context.symptoms)
-        from .intelligence.context.conversation import find_session
+        from ragai.context.conversation import find_session
 
         # Baris sesi kini bernama per consumer; yang penting satu ruang obrolan
         # tetap menghasilkan tepat satu sesi.
@@ -744,7 +744,7 @@ class EngineTests(TestCase):
 
     def test_every_published_evidence_has_safe_link(self):
         """Tidak boleh ada URL yang berasal dari DOI tak terverifikasi (§14)."""
-        from .intelligence import engine
+        from ragai import engine
 
         result = engine.process({"query": "demam dan batuk tiga hari",
                                  "mode": "consultation"})
@@ -755,7 +755,7 @@ class EngineTests(TestCase):
                 self.assertTrue(item.url.startswith("http"))
 
     def test_unsupported_query_short_circuits_retrieval(self):
-        from .intelligence import engine
+        from ragai import engine
 
         result = engine.process({"query": "Bagaimana cara trading saham?"})
         self.assertEqual(result.intent.value, "UNSUPPORTED")
@@ -763,7 +763,7 @@ class EngineTests(TestCase):
         self.assertEqual(result.metadata["candidates_retrieved"], 0)
 
     def test_emergency_query_is_flagged_end_to_end(self):
-        from .intelligence import engine
+        from ragai import engine
 
         result = engine.process({
             "query": "Saya nyeri dada hebat dan sesak napas berat sejak tadi",
@@ -774,7 +774,7 @@ class EngineTests(TestCase):
         self.assertIn("gawat darurat", result.answer.lower())
 
     def test_claim_mode_uses_claim_engine(self):
-        from .intelligence import engine
+        from ragai import engine
 
         result = engine.process({
             "query": "Benarkah vitamin C dosis tinggi menyembuhkan kanker?",
@@ -788,7 +788,7 @@ class EngineTests(TestCase):
         )
 
     def test_no_evidence_yields_insufficient_status(self):
-        from .intelligence import engine
+        from ragai import engine
 
         JournalArticle.objects.all().delete()
         result = engine.process({"query": "Apakah demam berdarah menular lewat udara?"})
@@ -804,17 +804,17 @@ class EngineTests(TestCase):
 class ConsultationSummaryTests(TestCase):
     def setUp(self):
         make_journal()
-        from .intelligence import engine
+        from ragai import engine
 
         for message in ("Saya demam", "Sudah tiga hari", "Sekarang batuk juga"):
             engine.process({"query": message, "mode": "consultation",
                             "context": {"session_id": "HT-SUM-1"}}, consumer="healthtalk")
-        from .intelligence.context.conversation import find_session
+        from ragai.context.conversation import find_session
 
         self.session = find_session("HT-SUM-1", consumer="healthtalk")
 
     def test_summary_extracts_only_reported_information(self):
-        from .intelligence.summarization.summarizer import build_summary
+        from ragai.summarization.summarizer import build_summary
 
         summary = build_summary(self.session)
 
@@ -825,7 +825,7 @@ class ConsultationSummaryTests(TestCase):
         self.assertIn("batuk", symptoms)
 
     def test_summary_does_not_hallucinate_unreported_fields(self):
-        from .intelligence.summarization.summarizer import build_summary
+        from ragai.summarization.summarizer import build_summary
 
         summary = build_summary(self.session)
         context = summary["health_context"]
@@ -839,7 +839,7 @@ class ConsultationSummaryTests(TestCase):
         self.assertEqual(summary["status"], "PRELIMINARY_ASSESSMENT")
 
     def test_summary_carries_provenance(self):
-        from .intelligence.summarization.summarizer import build_summary
+        from ragai.summarization.summarizer import build_summary
 
         summary = build_summary(self.session)
 
@@ -852,7 +852,7 @@ class ConsultationSummaryTests(TestCase):
             self.assertEqual(step["provenance"], "SYSTEM_GENERATED")
 
     def test_summary_is_persisted(self):
-        from .intelligence.summarization.summarizer import build_summary, persist_summary
+        from ragai.summarization.summarizer import build_summary, persist_summary
 
         summary = build_summary(self.session)
         persist_summary(self.session, summary)
@@ -1097,8 +1097,8 @@ class BackwardCompatibilityTests(TestCase):
         self.assertEqual(ConversationSession.objects.count(), 0)
 
     def test_legacy_adapter_maps_engine_response(self):
-        from .intelligence import engine
-        from .intelligence.adapters.legacy import (
+        from ragai import engine
+        from ragai.adapters.legacy import (
             claim_request_to_payload,
             engine_response_to_legacy,
         )
@@ -1142,8 +1142,8 @@ class EvidenceConsistencyTests(TestCase):
     """Response tidak boleh bertentangan dengan dirinya sendiri."""
 
     def test_insufficient_status_publishes_no_sources(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin, EvidenceStatus
-        from .intelligence.evidence.selector import select_evidence
+        from ragai.contracts import EvidenceItem, EvidenceOrigin, EvidenceStatus
+        from ragai.evidence.selector import select_evidence
 
         weak = EvidenceItem(
             chunk_id="c1", source_id="s1", title="Topik lain sama sekali",
@@ -1157,7 +1157,7 @@ class EvidenceConsistencyTests(TestCase):
 
 class CitationAttributionTests(TestCase):
     def _evidence(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
         return [EvidenceItem(
             chunk_id="c1", source_id="journal:1",
             title="Vitamin C for preventing and treating the common cold",
@@ -1169,7 +1169,7 @@ class CitationAttributionTests(TestCase):
 
     def test_citation_marker_attributes_across_languages(self):
         """Jawaban Bahasa Indonesia atas evidence Bahasa Inggris tetap tertelusur."""
-        from .intelligence.evidence.provenance import attribute_claims
+        from ragai.evidence.provenance import attribute_claims
 
         answer = ("Tidak ada bukti bahwa vitamin C dosis tinggi dapat menyembuhkan "
                   "kanker atau penyakit serius lainnya [E1].")
@@ -1184,7 +1184,7 @@ class CitationAttributionTests(TestCase):
         self.assertNotIn("[E1]", claims[0].claim)
 
     def test_out_of_range_citation_is_ignored(self):
-        from .intelligence.evidence.provenance import attribute_claims
+        from ragai.evidence.provenance import attribute_claims
 
         claims = attribute_claims(
             "Pernyataan medis yang cukup panjang untuk dianggap faktual [E9].",
@@ -1193,7 +1193,7 @@ class CitationAttributionTests(TestCase):
         self.assertEqual(claims[0].verdict, "unsupported")
 
     def test_system_sentences_are_not_attributed(self):
-        from .intelligence.evidence.provenance import attribute_claims
+        from ragai.evidence.provenance import attribute_claims
 
         answer = ("Saat ini kami belum menemukan bukti ilmiah yang cukup relevan di "
                   "basis pengetahuan Healthify. Sistem tidak menebak jawaban ketika "
@@ -1203,8 +1203,8 @@ class CitationAttributionTests(TestCase):
 
 class SafetyThresholdTests(TestCase):
     def test_partially_traceable_answer_is_not_flagged(self):
-        from .intelligence.contracts import EvidenceStatus, SupportedClaim
-        from .intelligence.safety.validator import validate_response
+        from ragai.contracts import EvidenceStatus, SupportedClaim
+        from ragai.safety.validator import validate_response
 
         unsupported = [SupportedClaim(claim="x", verdict="unsupported")]
         report = validate_response(
@@ -1217,8 +1217,8 @@ class SafetyThresholdTests(TestCase):
         self.assertFalse(report.has_flag("UNSUPPORTED_MEDICAL_CLAIM"))
 
     def test_answer_with_nothing_traceable_is_flagged(self):
-        from .intelligence.contracts import EvidenceStatus, SupportedClaim
-        from .intelligence.safety.validator import validate_response
+        from ragai.contracts import EvidenceStatus, SupportedClaim
+        from ragai.safety.validator import validate_response
 
         unsupported = [SupportedClaim(claim=f"x{i}", verdict="unsupported") for i in range(4)]
         report = validate_response(
@@ -1234,7 +1234,7 @@ class SafetyThresholdTests(TestCase):
 @OFFLINE
 class TemplateAnswerTests(TestCase):
     def test_template_answer_produces_no_spurious_claims(self):
-        from .intelligence import engine
+        from ragai import engine
 
         JournalArticle.objects.all().delete()
         result = engine.process({"query": "Bagaimana cara trading saham?"})
@@ -1243,7 +1243,7 @@ class TemplateAnswerTests(TestCase):
         self.assertNotIn("UNSUPPORTED_MEDICAL_CLAIM", codes)
 
     def test_insufficient_evidence_answer_has_no_sources(self):
-        from .intelligence import engine
+        from ragai import engine
 
         JournalArticle.objects.all().delete()
         result = engine.process({"query": "Apakah terapi X menyembuhkan penyakit Y?"})
@@ -1278,7 +1278,7 @@ class AuditSourceLinksCommandTests(TestCase):
         """Registry dipalsukan: test tidak boleh menembak jaringan."""
         from contextlib import ExitStack
 
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         def fake_resolve(doi, **kwargs):
             return (lv.STATUS_VERIFIED if doi.startswith("10.1056/")
@@ -1353,7 +1353,7 @@ class AuditSourceLinksCommandTests(TestCase):
         self.assertIn("judul tidak cocok: 0", output)
 
     def test_skip_titles_flag_avoids_registry_lookup(self):
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         with patch.object(lv, "resolve_doi", return_value=lv.STATUS_VERIFIED), \
              patch.object(lv, "fetch_doi_metadata") as fetch:
@@ -1391,7 +1391,7 @@ class ImportJournalsCommandTests(TestCase):
         from io import StringIO
 
         from django.core.management import call_command
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         out = StringIO()
         with patch("api.management.commands.import_journals.Command._search_crossref",
@@ -1449,12 +1449,12 @@ class LlmProviderFallbackTests(TestCase):
     """Rantai fallback bawaan (tanpa preferensi eksplisit dari environment)."""
 
     def setUp(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
         llm.reset_health()
         self.addCleanup(llm.reset_health)
 
     def test_falls_through_to_next_provider_on_failure(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
 
         with patch.dict("os.environ", {"GEMINI_API_KEY": "invalid", "OPENAI_API_KEY": "ok"}), \
              patch.object(llm, "_generate_gemini", side_effect=Exception("API key not valid")), \
@@ -1466,7 +1466,7 @@ class LlmProviderFallbackTests(TestCase):
         self.assertEqual(llm.available_provider(), llm.PROVIDER_OPENAI)
 
     def test_returns_none_when_every_provider_fails(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
 
         with patch.dict("os.environ", {"GEMINI_API_KEY": "x", "OPENAI_API_KEY": "y"}), \
              patch.object(llm, "_generate_gemini", side_effect=Exception("boom")), \
@@ -1474,7 +1474,7 @@ class LlmProviderFallbackTests(TestCase):
             self.assertIsNone(llm.generate("halo"))
 
     def test_unhealthy_provider_is_skipped(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
 
         with patch.dict("os.environ", {"GEMINI_API_KEY": "x", "OPENAI_API_KEY": "y"}):
             llm.mark_unhealthy(llm.PROVIDER_GEMINI, "diuji")
@@ -1485,14 +1485,14 @@ class LlmProviderFallbackTests(TestCase):
 
     @override_settings(LLM_PROVIDER="openai")
     def test_preference_setting_reorders_chain(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
 
         with patch.dict("os.environ", {"GEMINI_API_KEY": "x", "OPENAI_API_KEY": "y"}):
             self.assertEqual(llm.configured_providers()[0], llm.PROVIDER_OPENAI)
 
     @override_settings(INTELLIGENCE_LLM_ENABLED="0")
     def test_disabled_flag_returns_no_provider(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
 
         with patch.dict("os.environ", {"OPENAI_API_KEY": "y"}):
             self.assertEqual(llm.configured_providers(), [])
@@ -1539,7 +1539,7 @@ class BilingualRetrievalTests(TestCase):
         )
 
     def test_indonesian_terms_expand_to_english(self):
-        from .intelligence.lexicon import bilingual_variants
+        from ragai.lexicon import bilingual_variants
 
         self.assertIn("dengue", bilingual_variants("demam berdarah"))
         self.assertIn("typhoid", bilingual_variants("tifus"))
@@ -1550,9 +1550,9 @@ class BilingualRetrievalTests(TestCase):
         self.assertEqual(bilingual_variants("xyzzy"), ["xyzzy"])
 
     def test_indonesian_query_finds_english_journal(self):
-        from .intelligence.context.extractor import context_terms, extract_health_context
-        from .intelligence.evidence.selector import select_evidence
-        from .intelligence.retrieval.retriever import retrieve_candidates
+        from ragai.context.extractor import context_terms, extract_health_context
+        from ragai.evidence.selector import select_evidence
+        from ragai.retrieval.retriever import retrieve_candidates
 
         query = "Saya demam tinggi tiga hari dan ada bintik merah di kulit"
         ctx = extract_health_context(query)
@@ -1564,8 +1564,8 @@ class BilingualRetrievalTests(TestCase):
         self.assertIn("Dengue", selected[0].title)
 
     def test_condition_query_in_indonesian(self):
-        from .intelligence.evidence.selector import select_evidence
-        from .intelligence.retrieval.retriever import retrieve_candidates
+        from ragai.evidence.selector import select_evidence
+        from ragai.retrieval.retriever import retrieve_candidates
 
         candidates = retrieve_candidates("Apakah tifus bisa menular lewat makanan?")
         selected, status = select_evidence(candidates, limit=3)
@@ -1574,9 +1574,9 @@ class BilingualRetrievalTests(TestCase):
 
     def test_off_topic_query_still_matches_nothing(self):
         """Pengembangan bilingual tidak boleh membuat retrieval jadi asal cocok."""
-        from .intelligence.contracts import EvidenceStatus
-        from .intelligence.evidence.selector import select_evidence
-        from .intelligence.retrieval.retriever import retrieve_candidates
+        from ragai.contracts import EvidenceStatus
+        from ragai.evidence.selector import select_evidence
+        from ragai.retrieval.retriever import retrieve_candidates
 
         candidates = retrieve_candidates("Bagaimana cara memperbaiki mesin motor injeksi")
         selected, status = select_evidence(candidates, limit=3)
@@ -1584,7 +1584,7 @@ class BilingualRetrievalTests(TestCase):
         self.assertEqual(selected, [])
 
     def test_generic_tokens_weigh_less_than_concepts(self):
-        from .intelligence.retrieval.concepts import build_search_term_groups
+        from ragai.retrieval.concepts import build_search_term_groups
 
         groups = build_search_term_groups("Saya demam tinggi tiga hari")
         by_primary = {g["variants"][0]: g for g in groups}
@@ -1594,7 +1594,7 @@ class BilingualRetrievalTests(TestCase):
         self.assertFalse(by_primary["tiga"]["is_concept"])
 
     def test_lexical_score_counts_variant_group_once(self):
-        from .intelligence.retrieval.retriever import _lexical_score
+        from ragai.retrieval.retriever import _lexical_score
 
         groups = [{"variants": ["demam", "fever"], "weight": 1.5, "is_concept": True}]
         # Cocok lewat varian Inggris meski istilah aslinya Indonesia.
@@ -1606,8 +1606,8 @@ class EmergencyPrecisionTests(TestCase):
     """Peringatan gawat darurat harus presisi, bukan muncul di setiap penjelasan."""
 
     def test_educational_mention_does_not_trigger_warning(self):
-        from .intelligence.contracts import EvidenceStatus
-        from .intelligence.safety.validator import validate_response
+        from ragai.contracts import EvidenceStatus
+        from ragai.safety.validator import validate_response
 
         report = validate_response(
             answer=("Demam dengue dapat berkembang menjadi bentuk yang lebih serius "
@@ -1619,7 +1619,7 @@ class EmergencyPrecisionTests(TestCase):
         self.assertNotIn("PERINGATAN", report.answer)
 
     def test_user_reported_emergency_still_triggers(self):
-        from .intelligence.safety.validator import validate_response
+        from ragai.safety.validator import validate_response
 
         report = validate_response(
             answer="Demam dengue umumnya membaik dalam tujuh hari.",
@@ -1633,20 +1633,20 @@ class LlmProviderPreferenceTests(TestCase):
     """`LLM_PROVIDER` bersifat eksklusif, bukan sekadar urutan."""
 
     def setUp(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
         llm.reset_health()
         self.addCleanup(llm.reset_health)
 
     @override_settings(LLM_PROVIDER="openai")
     def test_named_provider_excludes_others(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
 
         with patch.dict("os.environ", {"GEMINI_API_KEY": "x", "OPENAI_API_KEY": "y"}):
             self.assertEqual(llm.configured_providers(), [llm.PROVIDER_OPENAI])
 
     @override_settings(LLM_PROVIDER="openai")
     def test_excluded_provider_is_never_called(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
 
         with patch.dict("os.environ", {"GEMINI_API_KEY": "kunci-mati", "OPENAI_API_KEY": "y"}), \
              patch.object(llm, "_generate_gemini") as gemini, \
@@ -1656,7 +1656,7 @@ class LlmProviderPreferenceTests(TestCase):
 
     @override_settings(LLM_PROVIDER="tidak-ada")
     def test_unknown_provider_degrades_to_no_llm(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
 
         with patch.dict("os.environ", {"OPENAI_API_KEY": "y"}):
             self.assertEqual(llm.configured_providers(), [])
@@ -1665,13 +1665,13 @@ class LlmProviderPreferenceTests(TestCase):
 
 class EmbeddingProviderTests(TestCase):
     def setUp(self):
-        from api.intelligence.retrieval import embeddings
+        from ragai.retrieval import embeddings
         embeddings.reset_dimension_cache()
         self.addCleanup(embeddings.reset_dimension_cache)
 
     @override_settings(EMBEDDINGS_ENABLED="0")
     def test_disabled_gate_makes_no_network_call(self):
-        from api.intelligence.retrieval import embeddings
+        from ragai.retrieval import embeddings
 
         with patch.object(embeddings, "_embed_openai") as openai_call:
             self.assertIsNone(embeddings.embed_texts(["teks"]))
@@ -1681,7 +1681,7 @@ class EmbeddingProviderTests(TestCase):
     @override_settings(EMBEDDING_DIMENSIONS="768")
     def test_openai_requested_with_matching_dimensions(self):
         """Dimensi harus cocok dengan kolom vektor agar tidak perlu migrasi."""
-        from api.intelligence.retrieval import embeddings
+        from ragai.retrieval import embeddings
 
         captured = {}
 
@@ -1709,7 +1709,7 @@ class EmbeddingProviderTests(TestCase):
 
     @override_settings(EMBEDDING_DIMENSIONS="768")
     def test_dimension_mismatch_is_rejected(self):
-        from api.intelligence.retrieval import embeddings
+        from ragai.retrieval import embeddings
 
         class FakeItem:
             embedding = [0.1] * 1536  # tidak dipotong ke 768
@@ -1731,7 +1731,7 @@ class EmbeddingProviderTests(TestCase):
 
     @override_settings(EMBEDDING_DIMENSIONS="768")
     def test_embed_journal_article_requires_a_provider(self):
-        from api.intelligence.retrieval import embeddings
+        from ragai.retrieval import embeddings
         from api.views import embed_journal_article
 
         journal = JournalArticle.objects.create(
@@ -1749,7 +1749,7 @@ class TranslationProviderTests(TestCase):
 
     def setUp(self):
         from django.core.cache import cache
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
         cache.clear()
         llm.reset_health()
         self.addCleanup(llm.reset_health)
@@ -1759,7 +1759,7 @@ class TranslationProviderTests(TestCase):
 
         with patch.dict("os.environ", {"GEMINI_API_KEY": "kunci-mati", "OPENAI_API_KEY": "y"}), \
              patch.object(views, "get_gemini_client") as gemini_client, \
-             patch("api.intelligence.reasoning.llm.generate", return_value="Translated"):
+             patch("ragai.reasoning.llm.generate", return_value="Translated"):
             result = views.translate_text("Teks kesehatan yang cukup panjang.", "en")
 
         self.assertEqual(result, "Translated")
@@ -1768,7 +1768,7 @@ class TranslationProviderTests(TestCase):
     def test_short_text_is_returned_unchanged(self):
         from api import views
 
-        with patch("api.intelligence.reasoning.llm.generate") as generate:
+        with patch("ragai.reasoning.llm.generate") as generate:
             self.assertEqual(views.translate_text("halo", "en"), "halo")
         generate.assert_not_called()
 
@@ -1776,14 +1776,14 @@ class TranslationProviderTests(TestCase):
         from api import views
 
         original = "Teks kesehatan yang cukup panjang untuk diterjemahkan."
-        with patch("api.intelligence.reasoning.llm.generate", return_value=None):
+        with patch("ragai.reasoning.llm.generate", return_value=None):
             self.assertEqual(views.translate_text(original, "en"), original)
 
     def test_translate_with_cache_reuses_result(self):
         from api import views
 
         original = "Teks kesehatan yang cukup panjang untuk diterjemahkan."
-        with patch("api.intelligence.reasoning.llm.generate",
+        with patch("ragai.reasoning.llm.generate",
                    return_value="Translated text") as generate:
             first = views.translate_with_cache(original, "en", cache_prefix="uji")
             second = views.translate_with_cache(original, "en", cache_prefix="uji")
@@ -1801,7 +1801,7 @@ class ModelParameterCompatibilityTests(TestCase):
     """
 
     def test_token_parameter_per_model_family(self):
-        from api.intelligence.reasoning.llm import completion_token_kwargs
+        from ragai.reasoning.llm import completion_token_kwargs
 
         self.assertEqual(completion_token_kwargs("gpt-4o-mini", 100), {"max_tokens": 100})
         self.assertEqual(completion_token_kwargs("gpt-4.1-mini", 100), {"max_tokens": 100})
@@ -1811,7 +1811,7 @@ class ModelParameterCompatibilityTests(TestCase):
             )
 
     def test_reasoning_models_use_completion_tokens(self):
-        from api.intelligence.reasoning.llm import completion_token_kwargs
+        from ragai.reasoning.llm import completion_token_kwargs
 
         for model in ("o3-mini", "o4-mini"):
             self.assertEqual(
@@ -1819,7 +1819,7 @@ class ModelParameterCompatibilityTests(TestCase):
             )
 
     def test_openai_call_uses_correct_parameter(self):
-        from api.intelligence.reasoning import llm
+        from ragai.reasoning import llm
 
         captured = {}
 
@@ -1855,7 +1855,7 @@ class ModelParameterCompatibilityTests(TestCase):
 
     @override_settings(LLM_MODEL="")
     def test_default_model_is_current_generation(self):
-        from api.intelligence.reasoning.llm import openai_model
+        from ragai.reasoning.llm import openai_model
 
         model = openai_model()
         self.assertTrue(model.startswith("gpt-5"), model)
@@ -1866,7 +1866,7 @@ class EnvVariableReuseTests(TestCase):
 
     @override_settings(LLM_MODEL="gpt-4.1-mini")
     def test_llm_model_variable_is_honoured(self):
-        from api.intelligence.reasoning.llm import openai_model
+        from ragai.reasoning.llm import openai_model
 
         self.assertEqual(openai_model(), "gpt-4.1-mini")
 
@@ -1959,7 +1959,7 @@ class SymptomLexiconCoverageTests(TestCase):
     ]
 
     def test_common_indonesian_complaints_are_detected(self):
-        from .intelligence.context.extractor import extract_symptoms
+        from ragai.context.extractor import extract_symptoms
 
         for text, expected in self.CASES:
             found = set(extract_symptoms(text))
@@ -1967,7 +1967,7 @@ class SymptomLexiconCoverageTests(TestCase):
 
     def test_word_boundary_prevents_false_matches(self):
         """Substring mentah membuat 'bersin' cocok di 'bersinar'."""
-        from .intelligence.context.extractor import extract_symptoms
+        from ragai.context.extractor import extract_symptoms
 
         for text in ("Matahari bersinar terang",
                      "Saya keramas setiap hari",
@@ -1977,7 +1977,7 @@ class SymptomLexiconCoverageTests(TestCase):
 
     def test_filler_words_inside_phrases(self):
         """'Kepala saya terasa berputar' harus sama dengan 'kepala berputar'."""
-        from .intelligence.context.extractor import extract_symptoms
+        from ragai.context.extractor import extract_symptoms
 
         self.assertIn("vertigo", extract_symptoms("Kepala saya terasa berputar"))
         self.assertIn("panas di dada", extract_symptoms("Dada saya terasa panas setelah makan"))
@@ -1985,7 +1985,7 @@ class SymptomLexiconCoverageTests(TestCase):
 
     def test_longer_phrase_wins_over_overlapping_shorter_one(self):
         """'gusi berdarah' tidak boleh sekaligus terhitung 'pendarahan'."""
-        from .intelligence.context.extractor import extract_symptoms
+        from ragai.context.extractor import extract_symptoms
 
         found = extract_symptoms("Saya sariawan dan gusi berdarah")
         self.assertIn("gusi berdarah", found)
@@ -1993,7 +1993,7 @@ class SymptomLexiconCoverageTests(TestCase):
         self.assertNotIn("pendarahan", found)
 
     def test_symptom_complaint_routes_to_symptom_context(self):
-        from .intelligence.query_understanding.classifier import classify_intent
+        from ragai.query_understanding.classifier import classify_intent
 
         result = classify_intent("Saya sering nyeri ulu hati dan panas di dada setelah makan")
         self.assertEqual(result.intent.value, "SYMPTOM_CONTEXT")
@@ -2064,7 +2064,7 @@ class VectorStoreProvisioningTests(TestCase):
     """Tombol Embed di panel admin harus bekerja walau tabel vektor belum ada."""
 
     def test_store_vector_failure_does_not_break_embedding(self):
-        from api.intelligence.retrieval import embeddings
+        from ragai.retrieval import embeddings
         from api.views import embed_journal_article
 
         journal = JournalArticle.objects.create(
@@ -2079,7 +2079,7 @@ class VectorStoreProvisioningTests(TestCase):
         self.assertTrue(json.loads(journal.embedding))
 
     def test_store_vector_provisions_before_insert(self):
-        from api.intelligence.retrieval import embeddings
+        from ragai.retrieval import embeddings
 
         with patch.object(embeddings, "ensure_vector_store", return_value=False) as ensure:
             self.assertFalse(embeddings.store_vector(
@@ -2088,7 +2088,7 @@ class VectorStoreProvisioningTests(TestCase):
         ensure.assert_called_once()
 
     def test_missing_provider_raises_actionable_error(self):
-        from api.intelligence.retrieval import embeddings
+        from ragai.retrieval import embeddings
         from api.views import embed_journal_article
 
         journal = JournalArticle.objects.create(
@@ -2110,7 +2110,7 @@ class SemanticBlendingTests(TestCase):
     """
 
     def test_similarity_below_floor_contributes_nothing(self):
-        from .intelligence.retrieval.retriever import _blend_scores
+        from ragai.retrieval.retriever import _blend_scores
 
         # Dokumen tak relevan: leksikal 0, similarity "biasa saja" -> tetap 0.
         self.assertEqual(_blend_scores(0.0, 0.24), 0.0)
@@ -2123,13 +2123,13 @@ class SemanticBlendingTests(TestCase):
           terjawab     : 0,435 - 0,657
           tidak terjawab: 0,303 - 0,414
         """
-        from .intelligence.retrieval.retriever import SEMANTIC_FLOOR
+        from ragai.retrieval.retriever import SEMANTIC_FLOOR
 
         self.assertGreater(SEMANTIC_FLOOR, 0.30)
         self.assertLess(SEMANTIC_FLOOR, 0.435)
 
     def test_missing_embedding_leaves_lexical_untouched(self):
-        from .intelligence.retrieval.retriever import _blend_scores
+        from ragai.retrieval.retriever import _blend_scores
 
         self.assertEqual(_blend_scores(0.87, None), 0.87)
 
@@ -2139,7 +2139,7 @@ class SemanticBlendingTests(TestCase):
         berbagi kata kunci, bukan pokok bahasan. Skornya ditahan agar tidak
         cukup untuk dinyatakan memadai.
         """
-        from .intelligence.retrieval.retriever import (
+        from ragai.retrieval.retriever import (
             NO_SEMANTIC_SUPPORT_PENALTY, _blend_scores,
         )
 
@@ -2148,7 +2148,7 @@ class SemanticBlendingTests(TestCase):
         self.assertLess(held, 0.87)
 
     def test_strong_similarity_boosts_weak_lexical(self):
-        from .intelligence.retrieval.retriever import _blend_scores
+        from ragai.retrieval.retriever import _blend_scores
 
         boosted = _blend_scores(0.10, 0.85)
         self.assertGreater(boosted, 0.10)
@@ -2156,7 +2156,7 @@ class SemanticBlendingTests(TestCase):
 
     def test_irrelevant_doc_is_not_promoted_above_relevant_one(self):
         """Regresi: dokumen antibiotik pernah naik di atas dokumen dengue."""
-        from .intelligence.retrieval.retriever import _blend_scores
+        from ragai.retrieval.retriever import _blend_scores
 
         relevan = _blend_scores(0.36, 0.42)      # cocok kata kunci
         tak_relevan = _blend_scores(0.05, 0.45)  # hanya mirip secara embedding
@@ -2168,8 +2168,8 @@ class CandidateScopeTests(TestCase):
     """Kandidat tidak boleh dipotong berdasarkan kebaruan sebelum diskor."""
 
     def test_older_but_more_relevant_journal_still_wins(self):
-        from .intelligence.retrieval.retriever import retrieve_from_journals
-        from .intelligence.retrieval.concepts import build_search_term_groups
+        from ragai.retrieval.retriever import retrieve_from_journals
+        from ragai.retrieval.concepts import build_search_term_groups
 
         # Jurnal yang paling cocok dibuat LEBIH DULU (jadi paling "lama").
         target = make_journal(
@@ -2320,7 +2320,7 @@ class HedgingIsNotAClaimTests(TestCase):
     """Ungkapan ketidakpastian bukan pernyataan medis yang perlu bersumber."""
 
     def _evidence(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
         return [EvidenceItem(
             chunk_id="c1", source_id="journal:1", title="Urinary tract infection",
             snippet="Dysuria and frequency are common symptoms in women.",
@@ -2329,7 +2329,7 @@ class HedgingIsNotAClaimTests(TestCase):
         )]
 
     def test_uncertainty_sentences_are_ignored(self):
-        from .intelligence.evidence.provenance import attribute_claims
+        from ragai.evidence.provenance import attribute_claims
 
         for kalimat in (
             "Karena itu, saya belum bisa memastikan gejala apa saja yang paling khas hanya dari bukti ini.",
@@ -2339,7 +2339,7 @@ class HedgingIsNotAClaimTests(TestCase):
             self.assertEqual(attribute_claims(kalimat, self._evidence()), [], kalimat)
 
     def test_cited_sentence_is_traced_even_across_languages(self):
-        from .intelligence.evidence.provenance import attribute_claims
+        from ragai.evidence.provenance import attribute_claims
 
         answer = ("Nyeri saat berkemih dan sering berkemih adalah gejala umum "
                   "infeksi saluran kemih pada wanita. [E1]")
@@ -2421,7 +2421,7 @@ class SentenceSplittingTests(TestCase):
     """Kalimat bersitasi tidak boleh hilang dari penilaian."""
 
     def test_sentence_after_citation_marker_is_split(self):
-        from .intelligence.evidence.provenance import split_sentences
+        from ragai.evidence.provenance import split_sentences
 
         text = ("Infeksi saluran kemih sering ditemukan pada perempuan. [E1] "
                 "Gejalanya meliputi nyeri saat berkemih. [E2] "
@@ -2429,8 +2429,8 @@ class SentenceSplittingTests(TestCase):
         self.assertEqual(len(split_sentences(text)), 3)
 
     def test_cited_sentence_is_attributed_not_dropped(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
-        from .intelligence.evidence.provenance import attribute_claims
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.evidence.provenance import attribute_claims
 
         evidence = [
             EvidenceItem(chunk_id=f"c{i}", source_id=f"journal:{i}", title=f"Studi {i}",
@@ -2450,7 +2450,7 @@ class SentenceSplittingTests(TestCase):
         self.assertEqual(claims[1].supporting_evidence[0]["source_id"], "journal:2")
 
     def test_insufficiency_statements_are_not_claims(self):
-        from .intelligence.evidence.provenance import attribute_claims
+        from ragai.evidence.provenance import attribute_claims
 
         for kalimat in (
             "Bukti yang tersedia saat ini belum memadai untuk menjawab pertanyaan tersebut.",
@@ -2462,8 +2462,8 @@ class SentenceSplittingTests(TestCase):
 @OFFLINE
 class SimpleAnswerCleanlinessTests(TestCase):
     def test_citation_markers_are_stripped(self):
-        from .intelligence.adapters.healthtalk import to_simple_response
-        from .intelligence.contracts import IntelligenceResponse
+        from ragai.adapters.healthtalk import to_simple_response
+        from ragai.contracts import IntelligenceResponse
 
         response = IntelligenceResponse(
             answer="Demam berlangsung tiga hari umumnya karena infeksi virus. [E1] "
@@ -2480,8 +2480,8 @@ class AnswerReadabilityTests(TestCase):
     """Jawaban ditujukan ke pembaca awam, bukan menarasikan proses internal."""
 
     def test_prompt_forbids_internal_jargon(self):
-        from .intelligence.reasoning.generator import _SYSTEM_PROMPT, build_prompt
-        from .intelligence.contracts import HealthContext, Intent
+        from ragai.reasoning.generator import _SYSTEM_PROMPT, build_prompt
+        from ragai.contracts import HealthContext, Intent
 
         self.assertIn("PEMBACA AWAM", _SYSTEM_PROMPT)
         self.assertIn("bukti yang tersedia", _SYSTEM_PROMPT)  # disebut sebagai larangan
@@ -2492,7 +2492,7 @@ class AnswerReadabilityTests(TestCase):
 
     def test_prompt_forbids_marker_as_sentence_subject(self):
         """Penanda sebagai subjek membuat kalimat rusak setelah dibersihkan."""
-        from .intelligence.reasoning.generator import _SYSTEM_PROMPT
+        from ragai.reasoning.generator import _SYSTEM_PROMPT
 
         self.assertIn("CATATAN KAKI", _SYSTEM_PROMPT)
         self.assertIn("SALAH", _SYSTEM_PROMPT)
@@ -2506,7 +2506,7 @@ class CitationPlacementTests(TestCase):
     """
 
     def _norm(self, text):
-        from .intelligence.reasoning.generator import _normalize_citation_placement
+        from ragai.reasoning.generator import _normalize_citation_placement
         return _normalize_citation_placement(text)
 
     def test_marker_as_subject_is_rewritten(self):
@@ -2552,8 +2552,8 @@ class CitationPlacementTests(TestCase):
         self.assertEqual(self._norm(text), text)
 
     def test_simple_format_yields_grammatical_sentences(self):
-        from .intelligence.adapters.healthtalk import to_simple_response
-        from .intelligence.contracts import IntelligenceResponse
+        from ragai.adapters.healthtalk import to_simple_response
+        from ragai.contracts import IntelligenceResponse
 
         raw = "[E1] menyatakan bahwa infeksi ini ditularkan melalui gigitan nyamuk."
         body = to_simple_response(IntelligenceResponse(answer=self._norm(raw)))
@@ -2571,7 +2571,7 @@ class ClaimVsInformationRoutingTests(TestCase):
     """
 
     def _intent(self, query, mode=None):
-        from .intelligence.query_understanding.classifier import classify_intent
+        from ragai.query_understanding.classifier import classify_intent
         return classify_intent(query, mode=mode).intent.value
 
     def test_information_questions_are_not_claims(self):
@@ -2594,7 +2594,7 @@ class ClaimVsInformationRoutingTests(TestCase):
             self.assertEqual(self._intent(query), "CLAIM_VERIFICATION", query)
 
     def test_caller_mode_information_is_respected(self):
-        from .intelligence.contracts import Mode
+        from ragai.contracts import Mode
 
         self.assertEqual(
             self._intent("Apa yang menyebabkan demam berdarah?", mode=Mode.INFORMATION),
@@ -2602,7 +2602,7 @@ class ClaimVsInformationRoutingTests(TestCase):
         )
 
     def test_explicit_claim_mode_still_routes_to_claim_engine(self):
-        from .intelligence.contracts import Mode
+        from ragai.contracts import Mode
 
         self.assertEqual(
             self._intent("Vitamin C menyembuhkan kanker", mode=Mode.CLAIM),
@@ -2613,10 +2613,10 @@ class ClaimVsInformationRoutingTests(TestCase):
 @OFFLINE
 class ClaimAnswerNormalizationTests(TestCase):
     def test_claim_engine_answer_is_also_normalized(self):
-        from .intelligence import engine
+        from ragai import engine
 
         make_journal()
-        with patch("api.intelligence.claims.evaluator.evaluate_claim") as evaluate:
+        with patch("ragai.claims.evaluator.evaluate_claim") as evaluate:
             evaluate.return_value = type("E", (), {
                 "verdict": "supported", "confidence": 0.8, "method": "llm",
                 "explanation": "[E1] menyatakan bahwa demam disebabkan infeksi virus.",
@@ -2715,7 +2715,7 @@ class BackendConsumerTests(TestCase):
 
     # --- idempotensi ---
     def test_repeat_with_same_key_is_not_reprocessed(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "process", wraps=engine.process) as spied:
             first = self._post(HTTP_X_IDEMPOTENCY_KEY="job-991")
@@ -2727,7 +2727,7 @@ class BackendConsumerTests(TestCase):
         self.assertIsNone(first.headers.get("X-Idempotent-Replay"))
 
     def test_different_keys_are_processed_separately(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "process", wraps=engine.process) as spied:
             self._post(HTTP_X_IDEMPOTENCY_KEY="job-1")
@@ -2735,7 +2735,7 @@ class BackendConsumerTests(TestCase):
         self.assertEqual(spied.call_count, 2)
 
     def test_without_key_every_request_is_processed(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "process", wraps=engine.process) as spied:
             self._post()
@@ -2744,7 +2744,7 @@ class BackendConsumerTests(TestCase):
 
     @override_settings(INTELLIGENCE_API_KEYS={"key-a": "a", "key-b": "b"})
     def test_idempotency_keys_do_not_leak_between_consumers(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "process", wraps=engine.process) as spied:
             self._post(HTTP_X_API_KEY="key-a", HTTP_X_IDEMPOTENCY_KEY="sama")
@@ -2753,7 +2753,7 @@ class BackendConsumerTests(TestCase):
 
     # --- error tetap membawa korelasi ---
     def test_error_response_carries_request_id(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "process", side_effect=Exception("boom")):
             response = self._post(HTTP_X_REQUEST_ID="trace-error-1")
@@ -2875,7 +2875,7 @@ class TitleAuthorityTests(TestCase):
     """
 
     def test_titles_match_tolerates_cosmetic_differences(self):
-        from .intelligence.evidence.link_validator import titles_match
+        from ragai.evidence.link_validator import titles_match
 
         self.assertTrue(titles_match(
             "Dengue Fever: An Overview",
@@ -2887,7 +2887,7 @@ class TitleAuthorityTests(TestCase):
         ))
 
     def test_titles_match_rejects_different_works(self):
-        from .intelligence.evidence.link_validator import titles_match
+        from ragai.evidence.link_validator import titles_match
 
         self.assertFalse(titles_match(
             "The impact of COVID-19 on male fertility: a systematic review",
@@ -2899,15 +2899,15 @@ class TitleAuthorityTests(TestCase):
         ))
 
     def test_missing_data_is_not_treated_as_mismatch(self):
-        from .intelligence.evidence.link_validator import titles_match
+        from ragai.evidence.link_validator import titles_match
 
         self.assertTrue(titles_match("", "Some Title"))
         self.assertTrue(titles_match("Some Title", ""))
 
     def test_evidence_title_is_replaced_by_registry_title(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
-        from .intelligence.evidence import link_validator as lv
-        from .intelligence.evidence.selector import validate_links
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.evidence import link_validator as lv
+        from ragai.evidence.selector import validate_links
 
         item = EvidenceItem(
             chunk_id="c1", source_id="source:1",
@@ -2929,9 +2929,9 @@ class TitleAuthorityTests(TestCase):
         self.assertTrue(validated[0].title_corrected)
 
     def test_matching_title_is_not_flagged_as_corrected(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
-        from .intelligence.evidence import link_validator as lv
-        from .intelligence.evidence.selector import validate_links
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.evidence import link_validator as lv
+        from ragai.evidence.selector import validate_links
 
         item = EvidenceItem(
             chunk_id="c1", source_id="journal:1",
@@ -2951,9 +2951,9 @@ class TitleAuthorityTests(TestCase):
 
     def test_absent_registry_metadata_leaves_title_untouched(self):
         """DOI dari agensi non-Crossref tidak punya metadata; jangan dikosongkan."""
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
-        from .intelligence.evidence import link_validator as lv
-        from .intelligence.evidence.selector import validate_links
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.evidence import link_validator as lv
+        from ragai.evidence.selector import validate_links
 
         item = EvidenceItem(
             chunk_id="c1", source_id="journal:1", title="Judul asli", snippet="...",
@@ -2973,7 +2973,7 @@ class CacheResilienceTests(TestCase):
     def test_broken_cache_does_not_break_validation(self):
         from django.core.cache import cache
 
-        from .intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         with patch.object(cache, "get", side_effect=Exception("tabel cache hilang")), \
              patch.object(cache, "set", side_effect=Exception("tabel cache hilang")), \
@@ -3002,7 +3002,7 @@ class DropMismatchedSourcesTests(TestCase):
         from io import StringIO
 
         from django.core.management import call_command
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         registry = {"title": "Median Arcuate Ligament Compression in Orthotopic "
                              "Liver Transplantation",
@@ -3050,7 +3050,7 @@ class TopicalRelevanceTests(TestCase):
     """
 
     def _focus(self, title, subjects):
-        from .intelligence.retrieval.retriever import _title_focus
+        from ragai.retrieval.retriever import _title_focus
         return _title_focus(title, set(subjects))
 
     def test_document_about_something_else_is_penalised(self):
@@ -3076,7 +3076,7 @@ class TopicalRelevanceTests(TestCase):
         )
 
     def test_off_topic_document_gets_the_off_topic_score(self):
-        from .intelligence.retrieval.retriever import (
+        from ragai.retrieval.retriever import (
             OFF_TOPIC_TITLE_SCORE, _topical_score,
         )
 
@@ -3091,7 +3091,7 @@ class TopicalRelevanceTests(TestCase):
 
     def test_partial_title_overlap_is_not_treated_as_off_topic(self):
         """Judul yang menyebut beberapa hal, salah satunya yang ditanyakan."""
-        from .intelligence.retrieval.retriever import (
+        from ragai.retrieval.retriever import (
             OFF_TOPIC_TITLE_SCORE, _topical_score,
         )
 
@@ -3109,7 +3109,7 @@ class TopicalRelevanceTests(TestCase):
 
     def test_nested_concepts_do_not_inflate_the_denominator(self):
         """'demam' dan 'demam berdarah' dari judul yang sama adalah satu topik."""
-        from .intelligence.retrieval.retriever import _collapse_nested
+        from ragai.retrieval.retriever import _collapse_nested
 
         self.assertEqual(_collapse_nested({"demam", "demam berdarah"}),
                          {"demam berdarah"})
@@ -3120,7 +3120,7 @@ class QuestionAspectTests(TestCase):
     """Pertanyaan berbeda tentang topik sama membutuhkan paper berbeda."""
 
     def test_aspects_are_extracted(self):
-        from .intelligence.lexicon import find_aspects
+        from ragai.lexicon import find_aspects
 
         self.assertIn("gejala", find_aspects("Apa gejala demam berdarah?"))
         self.assertIn("pengobatan", find_aspects("Bagaimana penanganan GERD?"))
@@ -3129,8 +3129,8 @@ class QuestionAspectTests(TestCase):
         self.assertIn("keamanan", find_aspects("Apa efek samping paracetamol?"))
 
     def test_aspect_lowers_score_when_unaddressed(self):
-        from .intelligence.contracts import EvidenceItem
-        from .intelligence.evidence.quality import compute_evidence_score
+        from ragai.contracts import EvidenceItem
+        from ragai.evidence.quality import compute_evidence_score
 
         base = dict(chunk_id="c", source_id="s", title="Judul",
                     snippet="Teks abstrak yang cukup panjang untuk dinilai.",
@@ -3141,8 +3141,8 @@ class QuestionAspectTests(TestCase):
         self.assertGreater(compute_evidence_score(cocok), compute_evidence_score(tidak))
 
     def test_sufficiency_requires_an_aspect_match(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin, EvidenceStatus
-        from .intelligence.evidence.selector import classify_sufficiency
+        from ragai.contracts import EvidenceItem, EvidenceOrigin, EvidenceStatus
+        from ragai.evidence.selector import classify_sufficiency
 
         def item(aspect):
             return EvidenceItem(chunk_id="c", source_id="s", title="T", snippet="x",
@@ -3159,7 +3159,7 @@ class BilingualConceptTests(TestCase):
     """Judul jurnal Inggris harus menghasilkan konsep yang sama dengan query Indonesia."""
 
     def test_english_condition_names_map_to_canonical(self):
-        from .intelligence.retrieval.concepts import extract_health_concepts
+        from ragai.retrieval.concepts import extract_health_concepts
 
         self.assertIn("infeksi saluran kemih",
                       extract_health_concepts("A Concise Overview on Urinary Tract Infection"))
@@ -3170,7 +3170,7 @@ class BilingualConceptTests(TestCase):
 
     def test_embedding_query_is_expanded_to_english(self):
         """Kemiripan embedding lintas bahasa terlalu lemah untuk membedakan apa pun."""
-        from .intelligence.retrieval.concepts import build_embedding_query
+        from ragai.retrieval.concepts import build_embedding_query
 
         expanded = build_embedding_query("Apa gejala demam berdarah?")
         self.assertIn("dengue", expanded)
@@ -3178,7 +3178,7 @@ class BilingualConceptTests(TestCase):
         self.assertIn("demam berdarah", expanded)
 
     def test_embedding_query_includes_aspect_terms(self):
-        from .intelligence.retrieval.concepts import build_embedding_query
+        from ragai.retrieval.concepts import build_embedding_query
 
         expanded = build_embedding_query("Bagaimana penanganan GERD?")
         self.assertIn("treatment", expanded)
@@ -3194,7 +3194,7 @@ class UntraceableSourceTests(TestCase):
     """
 
     def test_source_without_doi_or_url_is_excluded(self):
-        from .intelligence.retrieval.retriever import retrieve_from_sources
+        from ragai.retrieval.retriever import retrieve_from_sources
 
         claim = Claim.objects.create(text="Klaim uji")
         untraceable = Source.objects.create(
@@ -3208,7 +3208,7 @@ class UntraceableSourceTests(TestCase):
         self.assertEqual(results, [])
 
     def test_source_with_a_link_is_still_returned(self):
-        from .intelligence.retrieval.retriever import retrieve_from_sources
+        from ragai.retrieval.retriever import retrieve_from_sources
 
         claim = Claim.objects.create(text="Klaim uji")
         traceable = Source.objects.create(
@@ -3235,8 +3235,8 @@ class OffTopicExclusionTests(TestCase):
     """
 
     def test_off_topic_candidate_is_excluded(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin
-        from .intelligence.evidence.selector import select_evidence
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.evidence.selector import select_evidence
 
         on_topic = EvidenceItem(
             chunk_id="a", source_id="journal:1", title="COVID-19 and Recovery",
@@ -3257,8 +3257,8 @@ class OffTopicExclusionTests(TestCase):
         self.assertNotIn("Imaging in Dengue Fever", titles)
 
     def test_all_off_topic_yields_no_evidence(self):
-        from .intelligence.contracts import EvidenceItem, EvidenceOrigin, EvidenceStatus
-        from .intelligence.evidence.selector import select_evidence
+        from ragai.contracts import EvidenceItem, EvidenceOrigin, EvidenceStatus
+        from ragai.evidence.selector import select_evidence
 
         items = [
             EvidenceItem(chunk_id=str(i), source_id=f"journal:{i}",
@@ -3357,7 +3357,7 @@ class DiseaseFocusedRelevanceTests(TestCase):
     """
 
     def test_only_diseases_are_counted(self):
-        from .intelligence.retrieval.concepts import extract_conditions
+        from ragai.retrieval.concepts import extract_conditions
 
         found = extract_conditions(
             "A Concise Overview on Urinary Tract Infection (UTI) includes "
@@ -3368,7 +3368,7 @@ class DiseaseFocusedRelevanceTests(TestCase):
         self.assertNotIn("infeksi", found)
 
     def test_descriptive_title_stays_on_topic(self):
-        from .intelligence.retrieval.retriever import _title_focus
+        from ragai.retrieval.retriever import _title_focus
 
         focus = _title_focus(
             "A Concise Overview on Urinary Tract Infection (UTI) includes "
@@ -3378,7 +3378,7 @@ class DiseaseFocusedRelevanceTests(TestCase):
         self.assertEqual(focus, 1.0)
 
     def test_competing_disease_lowers_focus(self):
-        from .intelligence.retrieval.retriever import _title_focus
+        from ragai.retrieval.retriever import _title_focus
 
         focus = _title_focus("Tuberculosis treatment adherence in the era of COVID-19",
                              {"covid"})
@@ -3393,7 +3393,7 @@ class AspectLocationTests(TestCase):
     """
 
     def _coverage(self, title, body, keywords=""):
-        from .intelligence.retrieval.retriever import _aspect_coverage
+        from ragai.retrieval.retriever import _aspect_coverage
         return _aspect_coverage([["treatment", "pengobatan"]], title, body, keywords)
 
     def test_aspect_in_title_gets_full_credit(self):
@@ -3403,7 +3403,7 @@ class AspectLocationTests(TestCase):
         self.assertEqual(self._coverage("Dengue Fever", "", "dengue, treatment"), 1.0)
 
     def test_aspect_only_in_body_gets_partial_credit(self):
-        from .intelligence.retrieval.retriever import ASPECT_BODY_CREDIT
+        from ragai.retrieval.retriever import ASPECT_BODY_CREDIT
 
         self.assertEqual(self._coverage("Dengue Fever: An Overview",
                                         "Various treatment options exist."),
@@ -3413,7 +3413,7 @@ class AspectLocationTests(TestCase):
         self.assertEqual(self._coverage("Dengue Fever", "Epidemiology of dengue."), 0.0)
 
     def test_no_aspect_requested_is_not_penalised(self):
-        from .intelligence.retrieval.retriever import _aspect_coverage
+        from ragai.retrieval.retriever import _aspect_coverage
 
         self.assertEqual(_aspect_coverage([], "Judul apa pun", "isi apa pun"), 1.0)
 
@@ -3428,7 +3428,7 @@ class UnverifiedHasNoSourcesTests(TestCase):
 
     def _normalize(self, claim_text):
         from api.ai_adapter import normalize_ai_response
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         with patch.object(lv, "resolve_doi", return_value=lv.STATUS_VERIFIED), \
              patch.object(lv, "fetch_doi_metadata", return_value=None):
@@ -3461,7 +3461,7 @@ class SemanticFloorTests(TestCase):
     """
 
     def _item(self, title, semantic):
-        from api.intelligence.evidence.selector import EvidenceItem
+        from ragai.evidence.selector import EvidenceItem
 
         return EvidenceItem(
             title=title, doi="10.1000/x", url="", snippet="", publisher="J",
@@ -3469,7 +3469,7 @@ class SemanticFloorTests(TestCase):
         )
 
     def test_unrelated_document_is_dropped(self):
-        from api.intelligence.evidence.selector import _drop_semantically_unrelated
+        from ragai.evidence.selector import _drop_semantically_unrelated
 
         items = [self._item("Diabetes self-management", 0.16),
                  self._item("Hydration and fluid balance", 0.62)]
@@ -3483,7 +3483,7 @@ class SemanticFloorTests(TestCase):
         Embedding mati membuat semua kandidat bernilai 0.0. Menerapkan lantai
         di situ mengosongkan mesin, bukan menyaringnya.
         """
-        from api.intelligence.evidence.selector import _drop_semantically_unrelated
+        from ragai.evidence.selector import _drop_semantically_unrelated
 
         items = [self._item("A", 0.0), self._item("B", 0.0)]
 
@@ -3498,26 +3498,26 @@ class WordBoundaryMatchingTests(TestCase):
     """
 
     def test_short_term_does_not_match_inside_another_word(self):
-        from api.intelligence.retrieval.retriever import _variant_in
+        from ragai.retrieval.retriever import _variant_in
 
         self.assertFalse(_variant_in("tes", "understanding self-care in type 2 diabetes"))
         self.assertFalse(_variant_in("gula", "gene regulation in human cells"))
 
     def test_short_term_still_matches_as_a_whole_word(self):
-        from api.intelligence.retrieval.retriever import _variant_in
+        from ragai.retrieval.retriever import _variant_in
 
         self.assertTrue(_variant_in("tes", "hasil tes laboratorium"))
         self.assertTrue(_variant_in("gula", "kadar gula darah"))
 
     def test_longer_terms_keep_substring_behaviour(self):
         """Kecocokan parsial berguna untuk frasa: "dengue" pada "dengue fever"."""
-        from api.intelligence.retrieval.retriever import _variant_in
+        from ragai.retrieval.retriever import _variant_in
 
         self.assertTrue(_variant_in("dengue", "dengue fever outbreak"))
         self.assertTrue(_variant_in("tuberculosis", "pulmonary tuberculosis therapy"))
 
     def test_lexical_score_rejects_accidental_substring_hit(self):
-        from api.intelligence.retrieval.retriever import _lexical_score
+        from ragai.retrieval.retriever import _lexical_score
 
         score = _lexical_score(
             ["tes"], title="Understanding Self-Care in Type 2 Diabetes", body="", keywords="")
@@ -3529,7 +3529,7 @@ class WordBoundaryMatchingTests(TestCase):
         Sebelumnya "flu" menjangkau "influenza" hanya karena kebetulan
         substring. Kini hubungan itu dinyatakan eksplisit di leksikon.
         """
-        from api.intelligence.lexicon import bilingual_variants
+        from ragai.lexicon import bilingual_variants
 
         self.assertIn("influenza", bilingual_variants("flu"))
 
@@ -3542,9 +3542,9 @@ class OverlappingPhraseTests(TestCase):
     """
 
     def test_high_blood_sugar_is_not_read_as_hypertension(self):
-        from api.intelligence.retrieval.concepts import extract_conditions
+        from ragai.retrieval.concepts import extract_conditions
 
-        from api.intelligence.lexicon import canonical_condition
+        from ragai.lexicon import canonical_condition
 
         conditions = set(extract_conditions("gula darah tinggi berbahaya"))
 
@@ -3553,15 +3553,15 @@ class OverlappingPhraseTests(TestCase):
         self.assertNotIn(canonical_condition("darah tinggi"), conditions)
 
     def test_hypertension_alone_still_recognised(self):
-        from api.intelligence.retrieval.concepts import extract_conditions
+        from ragai.retrieval.concepts import extract_conditions
 
-        from api.intelligence.lexicon import canonical_condition
+        from ragai.lexicon import canonical_condition
 
         self.assertIn(canonical_condition("darah tinggi"),
                       set(extract_conditions("darah tinggi berbahaya")))
 
     def test_high_blood_sugar_reaches_english_literature(self):
-        from api.intelligence.lexicon import bilingual_variants
+        from ragai.lexicon import bilingual_variants
 
         variants = bilingual_variants("gula darah tinggi")
 
@@ -3578,7 +3578,7 @@ class CanonicalConditionTests(TestCase):
     """
 
     def test_question_and_title_agree_on_one_name(self):
-        from api.intelligence.retrieval.concepts import extract_conditions
+        from ragai.retrieval.concepts import extract_conditions
 
         question = set(extract_conditions("darah tinggi berbahaya"))
         title = set(extract_conditions("Preventing Hypertension Through Lifestyle Modification"))
@@ -3586,7 +3586,7 @@ class CanonicalConditionTests(TestCase):
         self.assertTrue(question & title, f"tidak beririsan: {question} vs {title}")
 
     def test_blood_sugar_question_meets_diabetes_literature(self):
-        from api.intelligence.retrieval.concepts import extract_conditions
+        from ragai.retrieval.concepts import extract_conditions
 
         question = set(extract_conditions("gula darah tinggi berbahaya"))
         title = set(extract_conditions("Management of Type 2 Diabetes Mellitus"))
@@ -3594,14 +3594,14 @@ class CanonicalConditionTests(TestCase):
         self.assertTrue(question & title, f"tidak beririsan: {question} vs {title}")
 
     def test_distinct_diseases_are_not_merged(self):
-        from api.intelligence.lexicon import canonical_condition
+        from ragai.lexicon import canonical_condition
 
         self.assertNotEqual(canonical_condition("darah tinggi"),
                             canonical_condition("diabetes"))
         self.assertNotEqual(canonical_condition("asma"), canonical_condition("tbc"))
 
     def test_synonyms_collapse_to_the_same_name(self):
-        from api.intelligence.lexicon import canonical_condition
+        from ragai.lexicon import canonical_condition
 
         self.assertEqual(canonical_condition("darah tinggi"),
                          canonical_condition("hipertensi"))
@@ -3616,12 +3616,12 @@ class EvidenceBreadthTests(TestCase):
     """
 
     def test_default_reference_count_is_eight(self):
-        from api.intelligence.contracts import IntelligenceRequest
+        from ragai.contracts import IntelligenceRequest
 
         self.assertEqual(IntelligenceRequest.from_payload({"query": "x"}).max_evidence, 8)
 
     def test_consumer_may_ask_for_more(self):
-        from api.intelligence.contracts import IntelligenceRequest
+        from ragai.contracts import IntelligenceRequest
 
         request = IntelligenceRequest.from_payload(
             {"query": "x", "options": {"max_evidence": 15}})
@@ -3629,7 +3629,7 @@ class EvidenceBreadthTests(TestCase):
         self.assertEqual(request.max_evidence, 15)
 
     def test_request_is_capped_at_twenty(self):
-        from api.intelligence.contracts import IntelligenceRequest
+        from ragai.contracts import IntelligenceRequest
 
         request = IntelligenceRequest.from_payload(
             {"query": "x", "options": {"max_evidence": 500}})
@@ -3641,7 +3641,7 @@ class EvidenceBreadthTests(TestCase):
         Knowledge base memuat paper berjudul sama dengan DOI berbeda. Keduanya
         sah, tetapi satu bacaan tidak boleh memakan dua slot referensi.
         """
-        from api.intelligence.evidence.selector import _dedupe_by_title, EvidenceItem
+        from ragai.evidence.selector import _dedupe_by_title, EvidenceItem
 
         items = [
             EvidenceItem(title="Gastroesophageal Reflux Disease", doi="10.1/a",
@@ -3666,7 +3666,7 @@ class DocumentedLimitsMatchEngineTests(TestCase):
 
     def test_documented_max_evidence_matches_contract(self):
         from api.openapi import build_openapi_spec
-        from api.intelligence.contracts import IntelligenceRequest
+        from ragai.contracts import IntelligenceRequest
 
         schema = build_openapi_spec()
         options = (schema["components"]["schemas"]["QueryRequest"]
@@ -3697,7 +3697,7 @@ class AutomaticCoverageTests(TestCase):
 
     def test_topic_phrase_is_english(self):
         """Literatur Crossref berbahasa Inggris; mengirim kalimat Indonesia percuma."""
-        from api.intelligence.retrieval.acquisition import build_topic_phrase
+        from ragai.retrieval.acquisition import build_topic_phrase
 
         phrase = build_topic_phrase("apakah covid berbahaya")
 
@@ -3706,7 +3706,7 @@ class AutomaticCoverageTests(TestCase):
         self.assertTrue(any(t in phrase for t in ("covid", "coronavirus", "sars-cov-2")))
 
     def test_non_health_question_triggers_no_fetch(self):
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
 
         with patch.object(acquisition, "search_crossref") as fetch:
             added = acquisition.ensure_coverage("buatkan kode python")
@@ -3719,7 +3719,7 @@ class AutomaticCoverageTests(TestCase):
         Tanpa jeda, satu topik yang memang tidak ada di Crossref akan dicari
         ulang pada setiap permintaan dan hanya memperlambat jawaban.
         """
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
 
         with patch.object(acquisition, "search_crossref", return_value=[]) as fetch:
             acquisition.ensure_coverage("apakah covid berbahaya")
@@ -3728,7 +3728,7 @@ class AutomaticCoverageTests(TestCase):
         self.assertEqual(fetch.call_count, 1)
 
     def test_network_failure_never_breaks_the_request(self):
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
 
         with patch.object(acquisition, "search_crossref", side_effect=OSError("jaringan mati")):
             self.assertEqual(acquisition.ensure_coverage("apakah covid berbahaya"), 0)
@@ -3738,8 +3738,8 @@ class AutomaticCoverageTests(TestCase):
         Jalur otomatis tidak boleh menjadi pintu belakang bagi DOI karangan.
         Syaratnya sama persis dengan impor manual.
         """
-        from api.intelligence.retrieval import acquisition
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.retrieval import acquisition
+        from ragai.evidence import link_validator as lv
 
         item = {"type": "journal-article", "DOI": "10.9999/tidak-ada",
                 "title": ["Judul"], "abstract": "x" * 300}
@@ -3755,7 +3755,7 @@ class AutomaticCoverageTests(TestCase):
         Mesin melengkapi lalu mengulang pengambilan sekali, bukan menyerah pada
         percobaan pertama.
         """
-        from api.intelligence import engine as engine_module
+        from ragai import engine as engine_module
 
         with patch.object(engine_module, "ensure_coverage", return_value=3) as fill, \
              patch.object(engine_module, "retrieve_candidates", return_value=[]) as fetch:
@@ -3774,10 +3774,10 @@ class ClaimPathSelfHealsTests(TestCase):
 
     def test_empty_result_triggers_coverage_then_retry(self):
         from api import ai_adapter
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
 
         with patch.object(acquisition, "ensure_coverage", return_value=4) as fill, \
-             patch("api.intelligence.retrieval.retriever.retrieve_candidates",
+             patch("ragai.retrieval.retriever.retrieve_candidates",
                    return_value=[]) as fetch:
             ai_adapter.retrieve_grounding_evidence("covid itu berbahaya")
 
@@ -3787,14 +3787,14 @@ class ClaimPathSelfHealsTests(TestCase):
     def test_sufficient_result_does_not_fetch(self):
         """Basis pengetahuan yang sudah memadai tidak boleh memicu jaringan."""
         from api import ai_adapter
-        from api.intelligence.retrieval import acquisition
-        from api.intelligence.contracts import EvidenceItem, EvidenceStatus
+        from ragai.retrieval import acquisition
+        from ragai.contracts import EvidenceItem, EvidenceStatus
 
         item = EvidenceItem(title="Dengue Fever: An Overview", doi="10.1/a",
                             url="", snippet="x", publisher="J")
 
         with patch.object(acquisition, "ensure_coverage") as fill, \
-             patch("api.intelligence.evidence.selector.select_evidence",
+             patch("ragai.evidence.selector.select_evidence",
                    return_value=([item], EvidenceStatus.SUFFICIENT)):
             ai_adapter.retrieve_grounding_evidence("demam berdarah berbahaya")
 
@@ -3997,21 +3997,21 @@ class HydrationVocabularyTests(TestCase):
     """
 
     def test_bare_water_word_is_not_a_search_term(self):
-        from api.intelligence.retrieval.concepts import build_search_terms
+        from ragai.retrieval.concepts import build_search_terms
 
         terms = [t.lower() for t in build_search_terms("air itu penting")]
 
         self.assertNotIn("air", terms)
 
     def test_phrase_containing_it_still_reaches_english_literature(self):
-        from api.intelligence.lexicon import bilingual_variants
+        from ragai.lexicon import bilingual_variants
 
         variants = bilingual_variants("air putih")
 
         self.assertIn("drinking water", variants)
 
     def test_hydration_question_is_expanded_to_english(self):
-        from api.intelligence.retrieval.concepts import build_embedding_query
+        from ragai.retrieval.concepts import build_embedding_query
 
         expanded = build_embedding_query("air putih menjaga hidrasi", []).lower()
 
@@ -4028,13 +4028,13 @@ class ThinCoverageTests(TestCase):
     """
 
     def _item(self, title, snippet=""):
-        from api.intelligence.contracts import EvidenceItem
+        from ragai.contracts import EvidenceItem
 
         return EvidenceItem(title=title, doi="10.1/a", url="", snippet=snippet,
                             publisher="J")
 
     def test_evidence_about_another_disease_counts_as_thin(self):
-        from api.intelligence.retrieval.acquisition import coverage_is_thin
+        from ragai.retrieval.acquisition import coverage_is_thin
 
         evidence = [self._item("Atopic dermatitis in children"),
                     self._item("Psoriasis treatment options")]
@@ -4047,7 +4047,7 @@ class ThinCoverageTests(TestCase):
         batasnya. Satu topik paling banyak sekali per jeda, sehingga perbedaan
         ejaan lintas bahasa tidak berubah menjadi permintaan berulang.
         """
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
 
         with patch("api.views.translate_text", return_value="scabies skin transmission"), \
              patch.object(acquisition, "search_crossref", return_value=[]) as fetch:
@@ -4057,7 +4057,7 @@ class ThinCoverageTests(TestCase):
         self.assertEqual(fetch.call_count, 1)
 
     def test_empty_evidence_is_thin(self):
-        from api.intelligence.retrieval.acquisition import coverage_is_thin
+        from ragai.retrieval.acquisition import coverage_is_thin
 
         self.assertTrue(coverage_is_thin("skabies menular", []))
 
@@ -4066,7 +4066,7 @@ class ThinCoverageTests(TestCase):
         Leksikon ditulis tangan dan selalu tertinggal. Penyakit yang belum
         tercatat harus tetap terjangkau lewat penerjemah.
         """
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
 
         with patch("api.views.translate_text", return_value="scabies skin contact transmission"):
             phrase = acquisition.build_topic_phrase("skabies menular lewat sentuhan kulit")
@@ -4078,7 +4078,7 @@ class ThinCoverageTests(TestCase):
         Terjemahan menambah jangkauan, bukan menggantikan istilah baku yang
         sudah terbukti cocok dengan judul jurnal.
         """
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
 
         with patch("api.views.translate_text", return_value="is covid dangerous"):
             phrase = acquisition.build_topic_phrase("apakah covid berbahaya").lower()
@@ -4088,7 +4088,7 @@ class ThinCoverageTests(TestCase):
 
     def test_translation_is_cached_per_topic(self):
         """Satu topik hanya diterjemahkan sekali, supaya tidak menambah biaya."""
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
 
         with patch("api.views.translate_text",
                    return_value="scabies transmission") as translate:
@@ -4106,12 +4106,12 @@ class DistinctiveTokenTests(TestCase):
     """
 
     def _item(self, title):
-        from api.intelligence.contracts import EvidenceItem
+        from ragai.contracts import EvidenceItem
 
         return EvidenceItem(title=title, doi="10.1/a", url="", snippet="", publisher="J")
 
     def test_generic_body_part_does_not_prove_coverage(self):
-        from api.intelligence.retrieval.acquisition import coverage_is_thin
+        from ragai.retrieval.acquisition import coverage_is_thin
 
         evidence = [self._item("Antibiotic treatment of acute bacterial skin infections"),
                     self._item("Tedizolid versus linezolid for skin structure infection")]
@@ -4123,7 +4123,7 @@ class DistinctiveTokenTests(TestCase):
         "berbahaya" tidak menunjuk topik. Tanpa pengecualian ini setiap
         pertanyaan "X berbahaya" akan dikira tidak terwakili.
         """
-        from api.intelligence.retrieval.acquisition import coverage_is_thin
+        from ragai.retrieval.acquisition import coverage_is_thin
 
         evidence = [self._item("COVID-19 severity and mortality in adults")]
 
@@ -4138,7 +4138,7 @@ class RetryUsesTranslatedTermsTests(TestCase):
     """
 
     def test_engine_retry_carries_english_terms(self):
-        from api.intelligence import engine as engine_module
+        from ragai import engine as engine_module
 
         with patch.object(engine_module, "ensure_coverage", return_value=4), \
              patch.object(engine_module, "build_topic_phrase",
@@ -4173,7 +4173,7 @@ class AcquisitionLatencyTests(TestCase):
         """
         import time
 
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
         from api.models import JournalArticle
 
         JournalArticle.objects.create(title="Belum ter-embed", doi="10.1/a",
@@ -4195,8 +4195,8 @@ class AcquisitionLatencyTests(TestCase):
         Kata Indonesia biasa seperti "menular" tidak boleh membuat pertanyaan
         yang sudah terjawab lengkap dinilai belum terwakili.
         """
-        from api.intelligence.contracts import EvidenceItem
-        from api.intelligence.retrieval.acquisition import coverage_is_thin
+        from ragai.contracts import EvidenceItem
+        from ragai.retrieval.acquisition import coverage_is_thin
 
         evidence = [EvidenceItem(title="Typhoid fever transmission and control",
                                  doi="10.1/a", url="", snippet="", publisher="J")]
@@ -4204,8 +4204,8 @@ class AcquisitionLatencyTests(TestCase):
         self.assertFalse(coverage_is_thin("apakah tifus menular lewat makanan", evidence))
 
     def test_unknown_disease_still_triggers_a_fetch(self):
-        from api.intelligence.contracts import EvidenceItem
-        from api.intelligence.retrieval.acquisition import coverage_is_thin
+        from ragai.contracts import EvidenceItem
+        from ragai.retrieval.acquisition import coverage_is_thin
 
         evidence = [EvidenceItem(title="Antibiotic treatment of bacterial skin infection",
                                  doi="10.1/a", url="", snippet="", publisher="J")]
@@ -4213,8 +4213,8 @@ class AcquisitionLatencyTests(TestCase):
         self.assertTrue(coverage_is_thin("skabies menular lewat sentuhan kulit", evidence))
 
     def test_known_disease_absent_from_evidence_triggers_a_fetch(self):
-        from api.intelligence.contracts import EvidenceItem
-        from api.intelligence.retrieval.acquisition import coverage_is_thin
+        from ragai.contracts import EvidenceItem
+        from ragai.retrieval.acquisition import coverage_is_thin
 
         evidence = [EvidenceItem(title="Hypertension and lifestyle change",
                                  doi="10.1/a", url="", snippet="", publisher="J")]
@@ -4228,7 +4228,7 @@ class AcquisitionLatencyTests(TestCase):
         from django.db import connection
         from django.test.utils import CaptureQueriesContext
 
-        from api.intelligence.retrieval import acquisition
+        from ragai.retrieval import acquisition
         from api.models import JournalArticle
 
         JournalArticle.objects.create(title="Ada", doi="10.1/a", abstract="x" * 300)
@@ -4257,7 +4257,7 @@ class LinkValidationLatencyTests(TestCase):
     """
 
     def _items(self, count):
-        from api.intelligence.contracts import EvidenceItem
+        from ragai.contracts import EvidenceItem
 
         return [EvidenceItem(title=f"Paper {i}", doi=f"10.1000/{i}", url="",
                              snippet="", publisher="J") for i in range(count)]
@@ -4265,8 +4265,8 @@ class LinkValidationLatencyTests(TestCase):
     def test_validation_runs_concurrently(self):
         import time
 
-        from api.intelligence.evidence import selector
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.evidence import selector
+        from ragai.evidence import link_validator as lv
 
         def slow_validate(doi, url, timeout=5.0, trust_on_unknown=False):
             time.sleep(0.25)
@@ -4283,8 +4283,8 @@ class LinkValidationLatencyTests(TestCase):
                         f"validasi masih berurutan: {elapsed:.2f}s untuk 8 referensi")
 
     def test_every_item_is_still_validated(self):
-        from api.intelligence.evidence import selector
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.evidence import selector
+        from ragai.evidence import link_validator as lv
 
         with patch.object(selector.lv, "validate_reference",
                           return_value={"doi": "10.1/x", "url": "u", "doi_verified": True,
@@ -4297,8 +4297,8 @@ class LinkValidationLatencyTests(TestCase):
         self.assertTrue(all(i.doi_verified for i in out))
 
     def test_one_broken_item_does_not_sink_the_rest(self):
-        from api.intelligence.evidence import selector
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.evidence import selector
+        from ragai.evidence import link_validator as lv
 
         calls = {"n": 0}
 
@@ -4328,7 +4328,7 @@ class ConversationIdentityTests(TestCase):
         return {"query": query, "context": context}
 
     def test_any_identifier_works_without_registration(self):
-        from api.intelligence import engine
+        from ragai import engine
         from api.models import ConversationSession
 
         with patch.object(engine, "retrieve_candidates", return_value=[]):
@@ -4340,7 +4340,7 @@ class ConversationIdentityTests(TestCase):
 
     def test_common_field_names_are_accepted(self):
         """Tiap produk menamai ruang obrolannya berbeda."""
-        from api.intelligence.contracts import IntelligenceRequest
+        from ragai.contracts import IntelligenceRequest
 
         for field in ("conversation_id", "session_id", "room_id", "thread_id", "chat_id"):
             request = IntelligenceRequest.from_payload(
@@ -4352,7 +4352,7 @@ class ConversationIdentityTests(TestCase):
         Dua produk bisa sama-sama memakai "room-1" tanpa saling tahu. Riwayat
         salah satu tidak boleh terbaca oleh yang lain.
         """
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "retrieve_candidates", return_value=[]):
             engine.process(self._payload("saya demam", conversation_id="room-1"),
@@ -4360,7 +4360,7 @@ class ConversationIdentityTests(TestCase):
             engine.process(self._payload("saya batuk", conversation_id="room-1"),
                            consumer="produk-b")
 
-        from api.intelligence.context.conversation import load_state
+        from ragai.context.conversation import load_state
 
         a = load_state("room-1", consumer="produk-a")
         b = load_state("room-1", consumer="produk-b")
@@ -4372,7 +4372,7 @@ class ConversationIdentityTests(TestCase):
 
     def test_existing_sessions_keep_working(self):
         """Sesi yang sudah berjalan tidak boleh terputus oleh pemisahan ini."""
-        from api.intelligence.context.conversation import load_state
+        from ragai.context.conversation import load_state
         from api.models import ConversationMessage, ConversationSession
 
         legacy = ConversationSession.objects.create(session_id="room-lama",
@@ -4410,7 +4410,7 @@ class ConversationEvidenceTests(TestCase):
         )
 
     def _item(self):
-        from api.intelligence.contracts import EvidenceItem, EvidenceOrigin
+        from ragai.contracts import EvidenceItem, EvidenceOrigin
 
         return EvidenceItem(
             chunk_id=f"journal:{self.journal.id}",
@@ -4426,13 +4426,13 @@ class ConversationEvidenceTests(TestCase):
 
     def _no_network(self):
         """DOI contoh tidak terdaftar di registry mana pun."""
-        from api.intelligence.evidence import link_validator as lv
+        from ragai.evidence import link_validator as lv
 
         return (patch.object(lv, "resolve_doi", return_value=lv.STATUS_VERIFIED),
                 patch.object(lv, "fetch_doi_metadata", return_value=None))
 
     def test_first_question_always_searches(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         doi_ok, meta_ok = self._no_network()
         with doi_ok, meta_ok, patch.object(
@@ -4445,7 +4445,7 @@ class ConversationEvidenceTests(TestCase):
         self.assertEqual((response.metadata or {}).get("evidence_source"), "retrieval")
 
     def test_follow_up_within_the_same_journals_reuses_them(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         doi_ok, meta_ok = self._no_network()
         with doi_ok, meta_ok, patch.object(
@@ -4463,7 +4463,7 @@ class ConversationEvidenceTests(TestCase):
         self.assertTrue(response.evidence)
 
     def test_question_beyond_the_journals_searches_again(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         doi_ok, meta_ok = self._no_network()
         with doi_ok, meta_ok, patch.object(
@@ -4480,7 +4480,7 @@ class ConversationEvidenceTests(TestCase):
         self.assertEqual((response.metadata or {}).get("evidence_source"), "retrieval")
 
     def test_a_room_without_history_never_reuses(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         doi_ok, meta_ok = self._no_network()
         with doi_ok, meta_ok, patch.object(
@@ -4491,8 +4491,8 @@ class ConversationEvidenceTests(TestCase):
         search.assert_called()
 
     def test_consumer_sees_whether_sources_were_reused(self):
-        from api.intelligence import engine
-        from api.intelligence.adapters.healthtalk import to_simple_response
+        from ragai import engine
+        from ragai.adapters.healthtalk import to_simple_response
 
         doi_ok, meta_ok = self._no_network()
         with doi_ok, meta_ok, patch.object(
@@ -4508,7 +4508,7 @@ class ConversationEvidenceTests(TestCase):
 
     def test_reused_evidence_keeps_the_same_references(self):
         """Rujukan yang ditampilkan harus persis sama, bukan sekadar mirip."""
-        from api.intelligence import engine
+        from ragai import engine
 
         doi_ok, meta_ok = self._no_network()
         with doi_ok, meta_ok, patch.object(
@@ -4530,7 +4530,7 @@ class ConversationDocumentationTests(TestCase):
     """
 
     def test_documented_room_fields_are_all_accepted(self):
-        from api.intelligence.contracts import IntelligenceRequest
+        from ragai.contracts import IntelligenceRequest
         from api.openapi import build_openapi_spec
 
         described = build_openapi_spec()["info"]["description"]
@@ -4562,7 +4562,7 @@ class TopicShiftTests(TestCase):
     """
 
     def _pool(self):
-        from api.intelligence.contracts import EvidenceItem
+        from ragai.contracts import EvidenceItem
 
         return [EvidenceItem(
             title="Dengue haemorrhagic fever in Indonesia",
@@ -4570,7 +4570,7 @@ class TopicShiftTests(TestCase):
             doi="10.1016/j.dengue.2021.01.001", url="u", publisher="Elsevier")]
 
     def test_follow_up_in_known_vocabulary_reuses(self):
-        from api.intelligence.context.evidence_memory import can_answer_from_memory
+        from ragai.context.evidence_memory import can_answer_from_memory
 
         self.assertTrue(can_answer_from_memory("apa gejalanya", self._pool()))
         self.assertTrue(can_answer_from_memory("apa saja gejala penyakit ini",
@@ -4585,17 +4585,17 @@ class TopicShiftTests(TestCase):
         tetap membawa konteks percakapan, sehingga umumnya menemukan jurnal
         yang sama.
         """
-        from api.intelligence.context.evidence_memory import can_answer_from_memory
+        from ragai.context.evidence_memory import can_answer_from_memory
 
         self.assertFalse(can_answer_from_memory("berapa lama sembuhnya", self._pool()))
 
     def test_a_different_disease_ends_the_reuse(self):
-        from api.intelligence.context.evidence_memory import can_answer_from_memory
+        from ragai.context.evidence_memory import can_answer_from_memory
 
         self.assertFalse(can_answer_from_memory("kalau asam urat bagaimana", self._pool()))
 
     def test_the_same_disease_keeps_the_reuse(self):
-        from api.intelligence.context.evidence_memory import can_answer_from_memory
+        from ragai.context.evidence_memory import can_answer_from_memory
 
         self.assertTrue(can_answer_from_memory("demam berdarah menular lewat apa",
                                                self._pool()))
@@ -4605,7 +4605,7 @@ class TopicShiftTests(TestCase):
         Leksikon selalu tertinggal. Kata tak dikenal yang juga tidak muncul di
         jurnal diperlakukan sebagai topik baru, bukan sebagai lanjutan.
         """
-        from api.intelligence.context.evidence_memory import can_answer_from_memory
+        from ragai.context.evidence_memory import can_answer_from_memory
 
         self.assertFalse(can_answer_from_memory("kalau skabies bagaimana", self._pool()))
 
@@ -4614,7 +4614,7 @@ class TopicShiftTests(TestCase):
         Menjaga alasan perbaikan ini tetap terlihat: query yang diperkaya
         konteks memuat topik lama, sehingga selalu dinilai masih tercakup.
         """
-        from api.intelligence.context.evidence_memory import can_answer_from_memory
+        from ragai.context.evidence_memory import can_answer_from_memory
 
         enriched = "kalau asam urat bagaimana demam berdarah pendarahan"
 
@@ -4631,7 +4631,7 @@ class TopicChangeDropsStaleContextTests(TestCase):
     """
 
     def _pool(self):
-        from api.intelligence.contracts import EvidenceItem
+        from ragai.contracts import EvidenceItem
 
         return [EvidenceItem(
             title="Dengue haemorrhagic fever in Indonesia",
@@ -4639,18 +4639,18 @@ class TopicChangeDropsStaleContextTests(TestCase):
             doi="10.1016/j.dengue.2021.01.001", url="u", publisher="Elsevier")]
 
     def test_a_new_disease_is_recognised_as_a_topic_change(self):
-        from api.intelligence.context.evidence_memory import topic_changed
+        from ragai.context.evidence_memory import topic_changed
 
         self.assertTrue(topic_changed("kalau asam urat bagaimana", self._pool()))
 
     def test_a_follow_up_is_not_a_topic_change(self):
-        from api.intelligence.context.evidence_memory import topic_changed
+        from ragai.context.evidence_memory import topic_changed
 
         self.assertFalse(topic_changed("apa gejalanya", self._pool()))
         self.assertFalse(topic_changed("demam berdarah menular lewat apa", self._pool()))
 
     def test_search_uses_the_bare_question_after_a_topic_change(self):
-        from api.intelligence import engine
+        from ragai import engine
         from api.models import JournalArticle
 
         JournalArticle.objects.create(
@@ -4678,7 +4678,7 @@ class MemoryOrderingTests(TestCase):
     def test_most_recent_turn_leads_the_pool(self):
         import json
 
-        from api.intelligence.context.evidence_memory import recent_evidence
+        from ragai.context.evidence_memory import recent_evidence
         from api.models import (ConversationMessage, ConversationSession,
                                 JournalArticle)
 
@@ -4706,7 +4706,7 @@ class ContextFollowsTheTopicTests(TestCase):
     """
 
     def _pool(self):
-        from api.intelligence.contracts import EvidenceItem
+        from ragai.contracts import EvidenceItem
 
         return [EvidenceItem(
             title="Dengue haemorrhagic fever in Indonesia",
@@ -4714,7 +4714,7 @@ class ContextFollowsTheTopicTests(TestCase):
             doi="10.1016/j.dengue.2021.01.001", url="u", publisher="Elsevier")]
 
     def setUp(self):
-        from api.intelligence.context.conversation import storage_key
+        from ragai.context.conversation import storage_key
         from api.models import ConversationSession
 
         # Ingatan hanya terbaca bila ruang obrolan sudah punya baris sesi.
@@ -4723,7 +4723,7 @@ class ContextFollowsTheTopicTests(TestCase):
                 session_id=storage_key("healthify", room), consumer="healthify")
 
     def test_context_restarts_when_the_disease_changes(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "recent_evidence", return_value=self._pool()), \
              patch.object(engine, "retrieve_candidates", return_value=[]):
@@ -4737,7 +4737,7 @@ class ContextFollowsTheTopicTests(TestCase):
         self.assertNotIn("pendarahan", symptoms)
 
     def test_context_still_accumulates_within_one_topic(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "recent_evidence", return_value=self._pool()), \
              patch.object(engine, "retrieve_candidates", return_value=[]):
@@ -4761,7 +4761,7 @@ class EmptySnapshotIsNotAMissingSnapshotTests(TestCase):
     def test_stored_empty_context_is_kept(self):
         import json
 
-        from api.intelligence.context.conversation import load_state, storage_key
+        from ragai.context.conversation import load_state, storage_key
         from api.models import ConversationMessage, ConversationSession
 
         session = ConversationSession.objects.create(
@@ -4777,7 +4777,7 @@ class EmptySnapshotIsNotAMissingSnapshotTests(TestCase):
 
     def test_history_still_rebuilds_when_no_snapshot_exists(self):
         """Consumer yang mengirim riwayat sendiri tetap mendapat konteksnya."""
-        from api.intelligence.context.conversation import (
+        from ragai.context.conversation import (
             load_state, rebuild_context_from_history)
 
         state = load_state(None, previous_messages=[
@@ -4978,8 +4978,8 @@ class SmallTalkTests(TestCase):
                 "selamat pagi", "oke", "thanks"]
 
     def test_courtesy_is_recognised(self):
-        from api.intelligence.contracts import Intent
-        from api.intelligence.query_understanding.classifier import classify_intent
+        from ragai.contracts import Intent
+        from ragai.query_understanding.classifier import classify_intent
 
         for message in self.COURTESY:
             self.assertEqual(classify_intent(message).intent, Intent.SMALL_TALK,
@@ -4990,8 +4990,8 @@ class SmallTalkTests(TestCase):
         "halo dok, saya batuk berdahak sudah seminggu" adalah keluhan yang
         kebetulan diawali sapaan. Keluhannya tidak boleh hilang.
         """
-        from api.intelligence.contracts import Intent
-        from api.intelligence.query_understanding.classifier import classify_intent
+        from ragai.contracts import Intent
+        from ragai.query_understanding.classifier import classify_intent
 
         for message in ("halo dok, saya batuk berdahak sudah seminggu",
                         "selamat pagi, apakah demam berdarah menular",
@@ -5000,7 +5000,7 @@ class SmallTalkTests(TestCase):
                                 f"salah dikira basa-basi: {message!r}")
 
     def test_no_retrieval_and_no_sources_for_courtesy(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "retrieve_candidates") as search:
             response = engine.process({"query": "terima kasih banyak"})
@@ -5014,7 +5014,7 @@ class SmallTalkTests(TestCase):
         Dijawab ramah, bukan dengan penolakan "di luar cakupan" yang dipakai
         untuk pertanyaan non-kesehatan.
         """
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "retrieve_candidates"):
             thanks = engine.process({"query": "terima kasih banyak"}).answer.lower()
@@ -5025,7 +5025,7 @@ class SmallTalkTests(TestCase):
         self.assertIn("halo", greeting)
 
     def test_courtesy_does_not_trigger_knowledge_acquisition(self):
-        from api.intelligence import engine
+        from ragai import engine
 
         with patch.object(engine, "ensure_coverage") as fill, \
              patch.object(engine, "retrieve_candidates"):
@@ -5045,7 +5045,7 @@ class CitationMarkersNeverReachReadersTests(TestCase):
     ANSWER = "Demam berdarah ditularkan nyamuk Aedes. [E1] Gejalanya demam tinggi. [E2]"
 
     def _response(self):
-        from api.intelligence.contracts import (
+        from ragai.contracts import (
             EvidenceStatus, HealthContext, IntelligenceResponse, Intent, Mode,
             SafetyDecision)
 
@@ -5057,7 +5057,7 @@ class CitationMarkersNeverReachReadersTests(TestCase):
         )
 
     def test_full_format_answer_is_clean(self):
-        from api.intelligence.adapters.healthtalk import to_consumer_response
+        from ragai.adapters.healthtalk import to_consumer_response
 
         body = to_consumer_response(self._response())
 
@@ -5067,19 +5067,19 @@ class CitationMarkersNeverReachReadersTests(TestCase):
 
     def test_annotated_version_is_still_available(self):
         """Yang butuh pemetaan kalimat ke bukti tidak kehilangan apa pun."""
-        from api.intelligence.adapters.healthtalk import to_consumer_response
+        from ragai.adapters.healthtalk import to_consumer_response
 
         body = to_consumer_response(self._response())
 
         self.assertIn("[E1]", body["answer_annotated"])
 
     def test_simple_format_stays_clean(self):
-        from api.intelligence.adapters.healthtalk import to_simple_response
+        from ragai.adapters.healthtalk import to_simple_response
 
         self.assertNotIn("[E", to_simple_response(self._response())["answer"])
 
     def test_no_space_is_left_before_punctuation(self):
-        from api.intelligence.citations import strip_citation_markers
+        from ragai.citations import strip_citation_markers
 
         self.assertEqual(strip_citation_markers("Benar [E1]. Lalu [E2], juga."),
                          "Benar. Lalu, juga.")
@@ -5226,3 +5226,65 @@ class PendingKeyIssuanceTests(TestCase):
             self._run()
 
         self.assertEqual(IntelligenceApiKey.objects.get().consumer, "arya-zaky")
+
+
+class EngineBoundaryTests(TestCase):
+    """
+    Engine berdiri sebagai produk tersendiri. Batas itu hanya bertahan bila
+    dijaga: satu impor ke `api` sudah cukup membuatnya tidak bisa dipakai di
+    luar Healthify, dan itu tidak akan ketahuan sampai ada yang mencoba.
+    """
+
+    def _engine_files(self):
+        import pathlib
+
+        import ragai
+
+        root = pathlib.Path(ragai.__file__).parent
+        return sorted(root.rglob("*.py"))
+
+    def test_engine_never_imports_the_host_application(self):
+        import re
+
+        pattern = re.compile(r"^\s*(from|import)\s+(api\b|\.\.\.)", re.M)
+        offenders = []
+        for path in self._engine_files():
+            for i, line in enumerate(path.read_text().split("\n"), 1):
+                if pattern.match(line):
+                    offenders.append(f"{path.name}:{i} {line.strip()}")
+
+        self.assertEqual(offenders, [], "engine mengimpor aplikasi induk")
+
+    def test_engine_declares_what_it_needs(self):
+        from ragai import runtime
+
+        self.assertTrue(runtime.is_configured(),
+                        "model yang dibutuhkan engine belum terdaftar")
+
+    def test_host_registers_every_required_model(self):
+        from ragai import runtime
+
+        for name in runtime.REQUIRED_MODELS:
+            self.assertIsNotNone(runtime.model(name), f"{name} tidak terdaftar")
+
+    def test_missing_registration_fails_clearly(self):
+        """
+        Engine yang berjalan tanpa tempat menyimpan harus gagal di dekat
+        sumbernya, bukan jauh di dalam pipeline dengan pesan yang tidak
+        menjelaskan apa pun.
+        """
+        from ragai import runtime
+
+        with self.assertRaises(RuntimeError) as caught:
+            runtime.model("TidakAda")
+
+        self.assertIn("configure", str(caught.exception))
+
+    def test_engine_is_usable_through_its_own_surface(self):
+        import ragai
+
+        with patch("ragai.engine.retrieve_candidates", return_value=[]):
+            response = ragai.process({"query": "apakah demam berdarah menular"})
+
+        self.assertTrue(response.answer)
+        self.assertTrue(ragai.version())

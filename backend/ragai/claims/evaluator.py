@@ -52,6 +52,8 @@ _EVAL_SYSTEM = (
 
 @dataclass
 class ClaimEvaluation:
+    """Satu pernyataan dalam jawaban beserta bukti yang menopangnya."""
+
     verdict: str = VERDICT_INCONCLUSIVE
     confidence: Optional[float] = None
     explanation: str = ""

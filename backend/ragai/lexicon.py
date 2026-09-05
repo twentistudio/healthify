@@ -192,14 +192,8 @@ SYMPTOM_LOOKUP = _flatten_symptoms()
 
 ALL_SYMPTOM_VARIANTS = sorted(SYMPTOM_LOOKUP.keys(), key=len, reverse=True)
 
-# Pencocokan gejala memakai batas kata, bukan substring mentah.
-# Tanpa ini "bersin" ikut cocok di "bersinar" dan "kram" di "keramas".
-#
-# Frasa juga memperbolehkan satu kata ganti menyisip di tengah, karena itu pola
-# lazim dalam Bahasa Indonesia: "Kepala saya berputar", "Mata saya berair",
-# "Perut saya kembung".
-# Maksimal dua kata sisipan dari daftar tertutup — cukup untuk
-# "Dada saya terasa panas" tanpa membuat pencocokan jadi longgar.
+# Pencocokan memakai batas kata, sebab "bersin" ikut cocok di "bersinar".
+# Maksimal dua kata sisipan agar "Dada saya terasa panas" tetap terkenali.
 _FILLER_WORDS = (
     "saya|aku|ku|nya|anda|kamu|dia|si|"
     "terasa|rasanya|merasa|jadi|juga|masih|sering|agak|sangat|terus|sudah"
@@ -248,13 +242,9 @@ def find_symptom_variants(text: str):
 # ---------------------------------------------------------------------------
 # Jembatan bilingual ID -> EN
 #
-# Knowledge base Healthify sebagian besar berbahasa Inggris (Crossref, PubMed),
-# sedangkan pengguna bertanya dalam Bahasa Indonesia. Tanpa pemetaan ini,
-# pencocokan leksikal gagal total dan setiap pertanyaan berakhir
-# INSUFFICIENT_EVIDENCE meski jurnalnya ada.
-#
-# Pemetaan bersifat deterministik (bukan terjemahan LLM) supaya retrieval tidak
-# bergantung pada ketersediaan/kualitas API terjemahan.
+# Knowledge base sebagian besar berbahasa Inggris sedangkan pertanyaan datang
+# dalam Bahasa Indonesia. Pemetaannya deterministik, bukan terjemahan LLM, agar
+# retrieval tidak bergantung pada ketersediaan API terjemahan.
 # ---------------------------------------------------------------------------
 
 CONDITION_TRANSLATIONS = {
@@ -382,15 +372,9 @@ GENERAL_TRANSLATIONS = {
 # ---------------------------------------------------------------------------
 # Penyatuan nama penyakit
 #
-# Satu penyakit punya banyak sebutan: pengguna menulis "darah tinggi",
-# jurnalnya berjudul "Hypertension" yang dipetakan balik menjadi "hipertensi".
-# Keduanya penyakit yang sama, tetapi sebagai string berbeda, sehingga gerbang
-# fokus judul menyimpulkan paper itu membahas hal lain dan membuangnya.
-# Pertanyaan tekanan darah pun dijawab tanpa satu pun paper tekanan darah.
-#
-# Sebagian besar pasangan dapat disimpulkan sendiri: dua istilah dengan
-# terjemahan Inggris yang persis sama pasti merujuk hal yang sama. Sisanya,
-# yang terjemahannya bertumpuk tetapi tidak identik, disebut eksplisit.
+# "darah tinggi" dan "hipertensi" adalah penyakit yang sama tetapi string yang
+# berbeda, dan gerbang fokus judul membuang paper yang justru tepat. Pasangan
+# dengan terjemahan identik disimpulkan sendiri; sisanya disebut eksplisit.
 _CANONICAL_OVERRIDES = {
     "gula darah tinggi": "diabetes",
     "hiperglikemia": "diabetes",
@@ -468,14 +452,9 @@ def bilingual_variants(term: str):
 # ---------------------------------------------------------------------------
 # Aspek pertanyaan
 #
-# Mencocokkan TOPIK saja tidak cukup untuk menilai relevansi. Pertanyaan
-# "apa gejala demam berdarah?" dan "bagaimana mencegah demam berdarah?"
-# punya topik sama tetapi membutuhkan paper yang berbeda. Sebaliknya, paper
-# berjudul "Tuberculosis treatment adherence in the era of COVID-19" menyebut
-# COVID-19 tetapi tidak menjawab apa pun tentang COVID-19.
-#
-# Aspek adalah "apa yang ingin diketahui" dari topik tersebut. Dokumen baru
-# layak disebut bukti bila ia membahas topik DAN aspeknya.
+# Topik saja tidak cukup: "apa gejala demam berdarah" dan "bagaimana mencegah
+# demam berdarah" bertopik sama tetapi butuh paper berbeda. Aspek adalah hal
+# yang ingin diketahui dari topik itu.
 # ---------------------------------------------------------------------------
 
 ASPECT_TERMS = {
@@ -579,10 +558,8 @@ def aspect_variants(aspect: str):
 # ---------------------------------------------------------------------------
 # Peta balik EN -> kanonik ID
 #
-# Judul jurnal berbahasa Inggris harus menghasilkan konsep kanonik yang sama
-# dengan pertanyaan berbahasa Indonesia. Tanpa peta ini, judul "Urinary Tract
-# Infection" tidak dikenali sebagai topik yang sama dengan "infeksi saluran
-# kemih", sehingga dokumen yang jelas relevan dinilai di luar topik.
+# Judul "Urinary Tract Infection" harus menghasilkan konsep yang sama dengan
+# pertanyaan "infeksi saluran kemih", agar tidak dinilai di luar topik.
 # ---------------------------------------------------------------------------
 
 def _build_reverse_translations():

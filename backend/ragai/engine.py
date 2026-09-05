@@ -109,11 +109,8 @@ def process(payload: Dict[str, Any], consumer: str = "healthify") -> Intelligenc
         health_context_payload=request.health_context,
         consumer=consumer,
     )
-    # Dibangun ulang HANYA bila sesi ini memang belum punya snapshot, mis. saat
-    # consumer mengirim riwayat sendiri lewat `previous_messages`. Snapshot yang
-    # kosong bukan snapshot yang hilang: itu keadaan sesudah pembahasan
-    # berpindah penyakit, dan membangunnya ulang dari riwayat justru
-    # mengembalikan topik yang baru saja ditinggalkan.
+    # Hanya bila sesi belum punya snapshot. Snapshot kosong berarti pembahasan
+    # baru berpindah penyakit, bukan riwayat yang hilang.
     if not state.has_snapshot and state.health_context.is_empty() and state.messages:
         state.health_context = rebuild_context_from_history(state)
 
@@ -138,14 +135,8 @@ def process(payload: Dict[str, Any], consumer: str = "healthify") -> Intelligenc
     effective_query = build_effective_query(request.query, state, intent)
     terms = context_terms(context)
 
-    # Di dalam ruang obrolan, satu topik dibahas lewat banyak gelembung pesan.
-    # Mengulang pencarian dari nol pada setiap pertanyaan membuat jurnal yang
-    # terpilih berganti-ganti antar giliran, sehingga jawaban tampak berubah
-    # pendirian untuk pembahasan yang sama.
-    #
-    # Urutannya: pertanyaan pertama selalu mencari. Pertanyaan lanjutan yang
-    # masih terjawab oleh jurnal percakapan ini memakai jurnal itu lagi. Yang
-    # sudah di luar jangkauannya memicu pencarian baru.
+    # Jurnal percakapan dipakai ulang selama masih menjawab, supaya rujukan
+    # dalam satu pembahasan tidak berganti antar giliran.
     evidence_source = "retrieval"
     remembered = []
     if intent not in _NO_RETRIEVAL_INTENTS and state.session is not None:
@@ -155,24 +146,15 @@ def process(payload: Dict[str, Any], consumer: str = "healthify") -> Intelligenc
             logger.warning("[ENGINE] ingatan bukti gagal dibaca: %s", exc)
             remembered = []
 
-    # Pertanyaan ASLI, bukan yang sudah diperkaya konteks: query yang diperkaya
-    # membawa topik sebelumnya, sehingga percakapan tidak akan pernah bisa
-    # berpindah pembahasan.
+    # Dinilai dari pertanyaan asli; query yang diperkaya konteks selalu membawa
+    # topik lama sehingga percakapan tidak pernah bisa berpindah.
     reuse = bool(remembered) and can_answer_from_memory(request.query, remembered)
 
-    # Ketika pengguna menyebut penyakit lain, konteks percakapan sebelumnya
-    # justru menyesatkan pencarian: istilah topik lama yang ikut ditempelkan ke
-    # query menenggelamkan penyakit yang baru disebut, sehingga pencarian
-    # "baru" mengembalikan jurnal yang sama persis. Untuk giliran itu
-    # pertanyaannya dipakai apa adanya.
+    # Penyakit baru: konteks lama dilepas, karena istilahnya menenggelamkan
+    # penyakit yang baru disebut dan pencarian mengembalikan jurnal yang sama.
     if remembered and not reuse and topic_changed(request.query, remembered):
         logger.info("[ENGINE] pembahasan berpindah; konteks topik lama dilepas")
-        # Konteks kesehatan bersifat akumulatif lintas giliran, dan itu memang
-        # yang diinginkan selama satu pembahasan. Begitu pengguna berpindah
-        # penyakit, akumulasi itu berubah menjadi beban: istilah topik lama
-        # ikut menempel pada setiap giliran berikutnya dan terus menarik jurnal
-        # yang sudah tidak dibicarakan. Konteks dimulai ulang dari pertanyaan
-        # yang membuka topik baru.
+        # Akumulasi konteks dimulai ulang dari pertanyaan yang membuka topik.
         context = extract_health_context(request.query)
         effective_query = request.query
         terms = context_terms(context)
@@ -180,9 +162,8 @@ def process(payload: Dict[str, Any], consumer: str = "healthify") -> Intelligenc
     candidates = []
     if reuse:
         evidence_source = "conversation"
-        # Dinilai ulang terhadap pertanyaan yang baru: baris dari basis data
-        # tidak membawa skor, dan jurnal yang ternyata sudah tidak nyambung
-        # harus tetap tersaring seperti pada pencarian biasa.
+        # Baris dari basis data tidak membawa skor, jadi dinilai ulang agar
+        # jurnal yang tidak lagi nyambung tetap tersaring.
         candidates = rescore_for_query(remembered, effective_query, extra_terms=terms)
         logger.info("[ENGINE] %d bukti percakapan dipakai ulang (tanpa pencarian baru)",
                     len(remembered))
@@ -204,17 +185,8 @@ def process(payload: Dict[str, Any], consumer: str = "healthify") -> Intelligenc
         validate=not reuse,
     )
 
-    # Pertanyaan kesehatan yang sah tetapi tidak menemukan bukti berarti ada
-    # lubang di basis pengetahuan, bukan pertanyaan yang buruk. Sebelumnya
-    # lubang itu hanya bisa ditutup oleh manusia yang kebetulan menyadarinya
-    # lalu menjalankan `import_journals`; konsumen eksternal tidak punya siapa
-    # pun yang mengawasi. Mesin menutupnya sendiri, lalu mencoba sekali lagi.
-    #
-    # Jurnal yang baru masuk melewati gerbang relevansi yang sama persis, jadi
-    # menambah bahan bacaan tidak pernah melonggarkan syarat apa pun.
-    # Penilaian ulang bisa menyisakan nol bila jurnal lama ternyata tidak lagi
-    # menjawab. Percakapan tidak boleh berakhir tanpa rujukan hanya karena
-    # sempat memilih jalur ingatan; pencarian biasa dijalankan sebagai gantinya.
+    # Ingatan bisa menyisakan nol setelah dinilai ulang. Percakapan tidak
+    # dibiarkan tanpa rujukan hanya karena sempat memilih jalur itu.
     if reuse and not evidence and intent not in _NO_RETRIEVAL_INTENTS:
         logger.info("[ENGINE] ingatan tidak lagi menjawab; kembali mencari")
         reuse = False
@@ -226,11 +198,8 @@ def process(payload: Dict[str, Any], consumer: str = "healthify") -> Intelligenc
         except Exception as exc:  # pragma: no cover
             logger.error("[ENGINE] retrieval gagal: %s", exc, exc_info=True)
 
-    #
-    # Pemicunya bukan hanya bukti kosong. Pertanyaan tentang skabies bisa saja
-    # menarik lima paper penyakit kulit lain dan lolos sebagai "cukup", padahal
-    # tak satu pun membahas skabies. Cakupan yang tipis diperlakukan sama
-    # dengan tidak ada cakupan.
+    # Bukti kosong maupun cakupan tipis sama-sama berarti basis pengetahuan
+    # belum memuat topiknya. Jurnal baru melewati gerbang relevansi yang sama.
     if not reuse and intent not in _NO_RETRIEVAL_INTENTS and (
             evidence_status == EvidenceStatus.INSUFFICIENT_EVIDENCE
             or coverage_is_thin(effective_query, evidence)):
@@ -240,12 +209,8 @@ def process(payload: Dict[str, Any], consumer: str = "healthify") -> Intelligenc
             logger.warning("[ENGINE] pelengkapan basis pengetahuan gagal: %s", exc)
             added = 0
 
-        # Percobaan ulang memakai istilah Inggris hasil terjemahan, dan berjalan
-        # baik ketika ada jurnal baru maupun tidak. Jurnal yang diambil pada
-        # pertanyaan sebelumnya tetap tak terjangkau bila percobaan berikutnya
-        # mengulang pertanyaan Indonesia yang sejak awal gagal menemukannya.
-        # Frasa ini sudah ada di cache dari proses pengambilan, jadi tidak
-        # menambah biaya.
+        # Istilah Inggris hasil terjemahan (sudah di-cache) dipakai pada
+        # percobaan ulang; pertanyaan Indonesia sendiri sudah terbukti gagal.
         topic = build_topic_phrase(effective_query)
         if added or topic:
             logger.info("[ENGINE] %d jurnal baru; pengambilan diulang dengan istilah Inggris",

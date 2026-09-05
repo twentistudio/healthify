@@ -7,6 +7,8 @@ from .version import VERIFICATION_LOGIC_VERSION
 
 # menyimpan sumber referensi seperti doi, url
 class Source(models.Model):
+    """Referensi ilmiah: satu jurnal atau artikel beserta DOI dan tautannya."""
+
     title = models.CharField(max_length=500)
     doi = models.CharField(max_length=255, blank=True, null=True)
     url = models.URLField(blank=True, null=True)
@@ -38,6 +40,8 @@ class Source(models.Model):
         
 # menyimpan klaim yang dikirim untuk diverifikasi
 class Claim(models.Model):
+    """Klaim kesehatan yang dikirim pengguna untuk diverifikasi."""
+
     text = models.TextField()
     text_normalized = models.TextField(blank=True, null=True)
     text_hash = models.CharField(max_length=64, db_index=True, null=True, blank=True)
@@ -75,6 +79,8 @@ class Claim(models.Model):
     
 # Model hubungan antara claim dan sumber
 class ClaimSource(models.Model):
+    """Kaitan antara satu klaim dan satu sumber, beserta kutipan pendukungnya."""
+
     claim = models.ForeignKey(Claim, on_delete=models.CASCADE)
     source = models.ForeignKey(Source, on_delete=models.CASCADE)
     relevance_score = models.FloatField(default=0.0)  
@@ -111,6 +117,8 @@ class ClaimSource(models.Model):
 
 # Model untuk menyimpan hasil verifikasi klaim untuk satu klaim
 class VerificationResult(models.Model):
+    """Hasil verifikasi satu klaim: label, keyakinan, dan ringkasan alasannya."""
+
     # Label hasil - UPDATED LABELS
     LABEL_VALID = 'valid'
     LABEL_HOAX = 'hoax'
@@ -132,7 +140,7 @@ class VerificationResult(models.Model):
     )
     summary = models.TextField(blank=True, null=True)
     
-    # IMPORTANT: Confidence can be NULL for UNVERIFIED claims
+    # Confidence boleh kosong untuk klaim yang tidak terverifikasi
     confidence = models.FloatField(default=0.0, null=True, blank=True)
     
     reviewer_notes = models.TextField(blank=True, null=True)
@@ -203,6 +211,8 @@ class VerificationResult(models.Model):
 
 # Model laporan hasil verifikasi klaim oleh user
 class Dispute(models.Model):
+    """Sanggahan pembaca atas hasil verifikasi, beserta bukti yang dilampirkan."""
+
     STATUS_PENDING = 'pending'
     STATUS_APPROVED = 'approved'
     STATUS_REJECTED = 'rejected'
@@ -246,6 +256,8 @@ class Dispute(models.Model):
 
 # Model untuk menyimpan laporan dari user
 class UserReport(models.Model):
+    """Laporan pengguna atas isi yang dianggap keliru atau bermasalah."""
+
     STATUS_PENDING = 'pending'
     STATUS_APPROVED = 'approved'
     STATUS_REJECTED = 'rejected'
@@ -273,6 +285,8 @@ class UserReport(models.Model):
 
 # Model untuk FAQ dinamis
 class FAQItem(models.Model):
+    """Satu butir tanya jawab yang ditampilkan di halaman bantuan."""
+
     question = models.CharField(max_length=500)
     answer = models.TextField()
     order = models.IntegerField(default=0)  
@@ -333,13 +347,11 @@ class JournalArticle(models.Model):
         return f"{self.title[:80]}... ({self.source_portal})"
 
 
-# ============================================================================
 # Health Intelligence Engine — model TAMBAHAN (additive, §23)
 #
 # Semua model di bawah ini BARU. Tidak ada satu pun field/tabel Healthify yang
 # sudah ada diubah atau dihapus. Healthify tetap berjalan penuh tanpa tabel ini
 # (dipakai hanya oleh endpoint /api/v1/intelligence/*).
-# ============================================================================
 
 class ConversationSession(models.Model):
     """Sesi percakapan multi-turn (dipakai HealthTalk, opsional untuk Healthify)."""
@@ -433,10 +445,9 @@ class ApiAccessRequest(models.Model):
     """
     Permintaan akses API dari pengembang luar (§ dokumentasi publik).
 
-    Diisi lewat formulir di halaman dokumentasi. Baris ini bukan kunci: ia
-    hanya catatan permintaan. Kunci diterbitkan terpisah oleh operator dengan
-    `python manage.py issue_api_key`, supaya penerbitan tetap keputusan manusia
-    dan tidak bisa dipicu sendiri oleh pengisi formulir.
+    Baris ini catatan permintaan, bukan kunci. Kunci diterbitkan terpisah lewat
+    `issue_api_key`, sehingga pengisi formulir tidak bisa memberi akses kepada
+    dirinya sendiri.
     """
 
     STATUS_PENDING = 'pending'
@@ -473,14 +484,13 @@ class IntelligenceApiKey(models.Model):
     """
     Kunci API untuk endpoint Intelligence.
 
-    Kunci TIDAK disimpan dalam bentuk aslinya. Yang tersimpan hanya SHA-256
-    miliknya, sehingga bocornya isi database tidak membocorkan kunci yang masih
-    berlaku. Nilai aslinya hanya ditampilkan sekali, saat diterbitkan.
+    Yang tersimpan hanya SHA-256 kuncinya, sehingga bocornya basis data tidak
+    membocorkan kunci yang berlaku; nilai aslinya ditampilkan sekali saat
+    diterbitkan.
 
-    Satu konsumen boleh punya banyak kunci sekaligus: satu per lingkungan
-    (produksi, staging), atau satu per aplikasi, sehingga satu kunci dapat
-    dicabut tanpa mematikan yang lain. Kunci dari variabel lingkungan
-    `INTELLIGENCE_API_KEYS` tetap berlaku berdampingan dengan tabel ini.
+    Satu konsumen boleh memegang banyak kunci, misalnya per lingkungan, agar
+    satu dapat dicabut tanpa mematikan yang lain. Kunci dari variabel lingkungan
+    `INTELLIGENCE_API_KEYS` tetap berlaku berdampingan.
     """
 
     consumer = models.CharField(max_length=100, db_index=True)

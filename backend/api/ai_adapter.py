@@ -129,7 +129,7 @@ def is_health_related_claim(claim_text: str, summary: str = "") -> bool:
     
     total_matches = keyword_matches + pattern_matches
     
-    # LOWER threshold - lebih permissive
+    # Ambang sengaja longgar: satu kecocokan sudah cukup
     is_health = total_matches >= 1  # Changed from 2 to 1
     
     logger.debug("[HEALTH_CHECK] kata kunci=%s pola=%s -> kesehatan=%s",
@@ -242,19 +242,11 @@ def normalize_ai_response(ai_result: Dict[str, Any], claim_text: str = "") -> Di
     logger.info(f"[NORMALIZE] Raw label: {raw_label} (mapped: {mapped_label}), Confidence: {confidence:.2f}")
     logger.info(f"[NORMALIZE] Has journal: {has_journal}, Total sources: {len(sources)}")
     
-    # Penilaian AI tidak boleh "dinaikkan" oleh tangga confidence.
-    #
-    # `confidence` dari model adalah keyakinan terhadap penilaiannya sendiri,
-    # bukan probabilitas bahwa klaim itu benar. Sebelumnya model yang menjawab
-    # "uncertain" dengan confidence tinggi (mis. yakin bahwa bukti tidak
-    # membahas klaim) tetap dipromosikan menjadi VALID oleh tangga confidence —
-    # sistem bisa melabeli FAKTA untuk klaim yang justru tidak didukung bukti.
-    #
-    # Aturan sekarang:
-    #   hoax                  -> tetap HOAX (tidak pernah dibalik)
-    #   uncertain/unverified  -> tidak pernah dipromosikan ke VALID
-    #   valid                 -> tangga confidence tetap berlaku, dan hanya
-    #                            dapat MENURUNKAN label (butuh jurnal + skor)
+    # Confidence adalah keyakinan model terhadap penilaiannya sendiri, bukan
+    # peluang klaimnya benar, jadi ia hanya boleh menurunkan label:
+    #   hoax                 -> tetap hoax
+    #   uncertain/unverified -> tidak pernah naik ke valid
+    #   valid                -> masih bisa turun (butuh jurnal + skor)
     if mapped_label == 'hoax':
         final_label = 'hoax'
         final_confidence = confidence
@@ -281,19 +273,17 @@ def normalize_ai_response(ai_result: Dict[str, Any], claim_text: str = "") -> Di
             summary=combined_summary
         )
 
-        # IMPORTANT: Jika label unverified, set confidence ke None
+        # Label unverified tidak membawa confidence
         final_confidence = confidence if final_label != 'unverified' else None
     
-    # Penanda sitasi dibuang dari teks yang akan dibaca pengguna. Ia notasi
-    # internal, dan di layar hanya tampak sebagai angka dalam kurung yang tidak
-    # berarti apa-apa; daftar referensi disajikan terpisah di bawah jawaban.
-    from .intelligence.citations import strip_citation_markers
+    # Penanda sitasi dibuang: notasi internal, dan daftar referensi sudah
+    # disajikan terpisah di bawah jawaban.
+    from ragai.citations import strip_citation_markers
 
     combined_summary = strip_citation_markers(combined_summary)
 
-    # Label UNVERIFIED berarti sistem tidak dapat menyimpulkan apa pun. Tetap
-    # melampirkan daftar sumber membantah label itu sendiri: pembaca melihat
-    # referensi seolah klaimnya tertelusur, padahal justru sebaliknya.
+    # Label UNVERIFIED berarti tidak ada kesimpulan; melampirkan sumber
+    # membantah label itu sendiri.
     if final_label == 'unverified' and sources:
         logger.info("[NORMALIZE] %d sumber dilepas karena label UNVERIFIED", len(sources))
         sources = []
@@ -316,26 +306,17 @@ def normalize_ai_response(ai_result: Dict[str, Any], claim_text: str = "") -> Di
 
 def extract_sources(result: Dict[str, Any], trusted: bool = False) -> List[Dict[str, Any]]:
     """
-    Ekstrak sources dari result dictionary dengan normalisasi + VALIDASI LINK.
+    Ekstrak sumber dari hasil model, dinormalkan dan divalidasi.
 
-    PENTING (perbaikan anti-404):
-        Sebelumnya DOI yang datang dari LLM langsung diubah menjadi
-        `https://doi.org/<doi>` tanpa pernah dicek. Akibatnya user bisa
-        menerima link DOI yang tidak ada / 404.
-
-        Sekarang setiap DOI dan URL divalidasi lewat
-        `api.intelligence.evidence.link_validator`:
-          - format DOI ngawur   -> sumber dibuang
-          - DOI tidak terdaftar -> sumber dibuang
-          - tidak bisa dicek    -> DOI disimpan sebagai metadata, tetapi
-                                   URL TIDAK diberikan (kecuali `trusted=True`
-                                   untuk sumber dari knowledge base sendiri)
+    Setiap DOI dan URL diperiksa lewat `evidence.link_validator`: format ngawur
+    dan DOI tak terdaftar dibuang, sedangkan yang tidak dapat dipastikan
+    disimpan sebagai metadata tanpa URL. Tanpa ini pengguna menerima tautan DOI
+    yang berujung 404.
 
     Args:
-        trusted: True bila sumber berasal dari knowledge base Healthify
-            (kurasi admin / indeks vektor), bukan karangan LLM.
+        trusted: sumber berasal dari knowledge base sendiri, bukan dari model.
     """
-    from .intelligence.evidence import link_validator as lv
+    from ragai.evidence import link_validator as lv
 
     sources = []
 
@@ -530,7 +511,7 @@ def training_modules_available() -> bool:
             logger.info("Training modules not available - using direct AI method")
     return _TRAINING_MODULES_OK
 
-# Direct Import Methods (FASTEST - only if dependencies available)
+# Impor langsung, dipakai bila dependensinya tersedia
 
 def get_optimized_module():
     """Lazy import optimized module."""
@@ -650,7 +631,7 @@ def call_ai_verify(claim_text: str, additional_evidence: Optional[Dict[str, Any]
         result = call_ai_direct(claim_text, additional_evidence)
         return normalize_ai_response(result, claim_text)
     
-    # Method 1: Direct import (FASTEST) - jika script ada dan modules tersedia
+    # Jalur tercepat: impor langsung bila skrip dan modulnya tersedia
     if VERIFY_SCRIPT.exists():
         try:
             result = call_ai_verify_direct_optimized(claim_text)
@@ -680,18 +661,18 @@ def retrieve_grounding_evidence(claim_text: str, limit: int = 8) -> List[Dict[st
 
     Memakai ulang seluruh sumber pengetahuan yang sudah ada (JournalArticle,
     Source/ClaimSource, dan indeks pgvector bila tersedia) melalui
-    `api.intelligence.retrieval`. Tidak ada sumber baru yang dibuat di sini.
+    `ragai.retrieval`. Tidak ada sumber baru yang dibuat di sini.
     """
     try:
-        from .intelligence.contracts import EvidenceStatus
-        from .intelligence.evidence.selector import select_evidence
-        from .intelligence.retrieval.acquisition import (
+        from ragai.contracts import EvidenceStatus
+        from ragai.evidence.selector import select_evidence
+        from ragai.retrieval.acquisition import (
             build_topic_phrase,
             coverage_is_thin,
             ensure_coverage,
         )
-        from .intelligence.retrieval.concepts import extract_health_concepts
-        from .intelligence.retrieval.retriever import retrieve_candidates
+        from ragai.retrieval.concepts import extract_health_concepts
+        from ragai.retrieval.retriever import retrieve_candidates
 
         terms = extract_health_concepts(claim_text)
         candidates = retrieve_candidates(claim_text, extra_terms=terms)
@@ -814,7 +795,7 @@ Panduan label:
 - "uncertain": EVIDENCE tidak cukup atau tidak membahas klaim ini"""
 
     try:
-        from .intelligence.reasoning.llm import completion_token_kwargs, openai_model
+        from ragai.reasoning.llm import completion_token_kwargs, openai_model
 
         model = openai_model()
         response = client.chat.completions.create(
@@ -940,11 +921,8 @@ Abstrak/Konten:
     except Exception as e:
         logger.error(f"[VERIFY_WITH_EVIDENCE] Error: {e}")
         raise
-# Ringkasan konfigurasi saat modul dimuat. Ditulis pada level DEBUG: isinya
-# tidak berubah selama proses hidup, tetapi dicetak ulang oleh setiap worker
-# pada setiap deploy, dan garis "=" sepanjang delapan puluh karakter membuat
-# log sulit dibaca tanpa memberi tahu apa pun yang tidak dapat dilihat dari
-# konfigurasi.
+# Ringkasan konfigurasi saat modul dimuat, pada level DEBUG: isinya tetap
+# selama proses hidup tetapi dicetak ulang oleh setiap worker.
 logger.debug(
     "[VERIFY] skrip=%s ada=%s timeout=%ss retry=%s",
     VERIFY_SCRIPT, VERIFY_SCRIPT.exists(), VERIFICATION_TIMEOUT, MAX_RETRIES,

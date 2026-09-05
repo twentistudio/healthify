@@ -61,14 +61,14 @@ def _enum_values(enum_cls):
 def build_openapi_spec(base_url: str = "") -> Dict[str, Any]:
     from django.conf import settings
 
-    from .intelligence.contracts import (
+    from ragai.contracts import (
         EvidenceStatus,
         Intent,
         Mode,
         Provenance,
         SafetyDecision,
     )
-    from .intelligence.engine import ENGINE_VERSION
+    from ragai.engine import ENGINE_VERSION
 
     auth_required = bool(getattr(settings, "INTELLIGENCE_API_KEYS", None))
     ALLOWED_HOSTS = [

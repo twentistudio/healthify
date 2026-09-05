@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class IntentResult:
+    """Hasil klasifikasi intent beserta keyakinan dan sinyal pendukungnya."""
+
     intent: Intent
     confidence: float = 0.5
     signals: List[str] = field(default_factory=list)
@@ -173,10 +175,9 @@ def _is_small_talk(low: str, symptom_hits) -> bool:
     """
     Apakah pesan ini hanya basa-basi.
 
-    Tiga syarat harus terpenuhi bersamaan: polanya cocok, pesannya pendek, dan
-    tidak ada gejala maupun konsep kesehatan yang disebut. Tanpa syarat kedua
-    dan ketiga, "halo dok, saya batuk berdahak sudah seminggu" akan dijawab
-    dengan sapaan dan keluhannya hilang.
+    Polanya cocok, pesannya pendek, dan tidak menyebut gejala maupun konsep
+    kesehatan. Tanpa dua syarat terakhir, "halo dok, saya batuk seminggu"
+    dijawab sebagai sapaan dan keluhannya hilang.
     """
     if symptom_hits:
         return False

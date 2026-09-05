@@ -26,6 +26,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from ..contracts import EvidenceItem, EvidenceOrigin
 from ..lexicon import find_aspects
+from .. import runtime
 from .concepts import (
     build_aspect_groups,
     extract_conditions,
@@ -39,51 +40,33 @@ from .concepts import (
 
 logger = logging.getLogger(__name__)
 
-# Berapa banyak kandidat diambil per sumber sebelum diperingkat. Angka ini
-# menentukan seberapa luas mesin membaca sebelum memutuskan, bukan berapa
-# referensi yang akhirnya disajikan. Membaca lebih luas hampir gratis (skoring
-# leksikal murah) dan mengurangi risiko satu paper kebetulan mendominasi
-# jawaban hanya karena kandidat lain tidak pernah ikut dinilai.
+# Seberapa luas mesin membaca sebelum memutuskan, bukan berapa referensi yang
+# disajikan. Membaca lebih luas hampir gratis karena skoring leksikal murah.
 DEFAULT_CANDIDATE_LIMIT = 80
 
-# Berapa banyak baris yang boleh diskor per sumber. Penyaringan kata kunci sudah
-# mempersempit kandidat; skoring leksikal murah, jadi batas ini dibuat longgar.
-# Sebelumnya kandidat dipotong berdasarkan `-created_at` sebelum diskor, sehingga
-# relevansi praktis ditentukan oleh KEBARUAN — jurnal lama yang paling cocok
-# tidak pernah ikut dinilai begitu knowledge base membesar.
+# Batas baris yang diskor per sumber, dibuat longgar. Memotong kandidat lebih
+# awal berdasarkan tanggal membuat relevansi ditentukan oleh kebaruan.
 MAX_SCORED_CANDIDATES = 500
 
-# Cosine similarity antar teks kesehatan selalu tinggi bahkan untuk dokumen yang
-# tidak berkaitan, jadi nilai mentah harus dikalibrasi terhadap "lantai" itu.
-#
-# Angka di bawah diturunkan dari pengukuran pada knowledge base nyata memakai
-# query yang sudah diperluas ke padanan Inggris (build_embedding_query):
-#   pertanyaan yang ADA jawabannya    : 0,435 - 0,657
-#   pertanyaan yang TIDAK ada         : 0,303 - 0,414
+# Cosine similarity antar teks kesehatan selalu tinggi, jadi dikalibrasi
+# terhadap lantainya. Terukur: ada jawaban 0,435-0,657; tidak ada 0,303-0,414.
 SEMANTIC_FLOOR = 0.35
 SEMANTIC_WEIGHT = 0.5
 
-# Dokumen yang cocok secara kata kunci tetapi TIDAK didukung kemiripan semantik
-# hanya mempertahankan sebagian skornya. Ia masih boleh muncul sebagai bukti
-# terbatas, tetapi tidak boleh cukup untuk dinyatakan memadai. Inilah yang
-# mencegah kumpulan paper yang sekadar menyebut nama penyakit disajikan sebagai
-# jawaban atas pertanyaan yang sebenarnya tidak terjawab.
+# Cocok kata kunci tanpa dukungan semantik hanya menyisakan sebagian skor:
+# boleh muncul sebagai bukti terbatas, tidak cukup untuk dinyatakan memadai.
 NO_SEMANTIC_SUPPORT_PENALTY = 0.65
 
-# Nilai untuk dokumen yang JUDULNYA membahas topik lain sama sekali. Dokumen
-# semacam itu bisa saja memuat kata kunci yang sama di dalam abstraknya, tetapi
-# menyajikannya sebagai bukti hanya membuat pembaca membuka paper yang tidak
-# ada kaitannya dengan pertanyaannya.
+# Nilai untuk dokumen yang judulnya membahas topik lain, sekalipun abstraknya
+# memuat kata kunci yang sama.
 OFF_TOPIC_TITLE_SCORE = 0.25
 
-# Judul yang sebagian besar membahas topik lain diperlakukan sebagai di luar
-# topik. "Tuberculosis treatment adherence in the era of COVID-19" menyebut
-# COVID-19, tetapi tiga perempat judulnya tentang tuberkulosis.
+# Batas fokus judul. "Tuberculosis treatment adherence in the era of COVID-19"
+# menyebut COVID-19, tetapi pokoknya tuberkulosis.
 MIN_TITLE_FOCUS = 0.5
 
-# Istilah aspek yang muncul di JUDUL atau KEYWORDS menandakan dokumen memang
-# membahas hal itu. Kemunculan di badan abstrak jauh lebih lemah: kata seperti
-# "effective" atau "symptom" ada di hampir setiap abstrak medis.
+# Aspek di judul atau keywords menandakan pokok bahasan; di badan abstrak jauh
+# lebih lemah karena kata seperti "effective" ada di hampir semua abstrak.
 ASPECT_BODY_CREDIT = 0.5
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
@@ -159,22 +142,12 @@ def _title_focus(title: str, query_subjects: set) -> float:
     """
     Seberapa besar bagian JUDUL dokumen yang memang membahas hal yang ditanyakan.
 
-    Kecocokan kata kunci tidak membedakan dokumen yang *membahas* sebuah topik
-    dari dokumen yang hanya *menyebutnya sambil lalu*. Contoh nyata:
-    "Tuberculosis treatment adherence in the era of COVID-19" memuat COVID-19 di
-    judulnya, tetapi pokok bahasannya tuberkulosis. Untuk pertanyaan tentang
-    COVID-19, paper itu bukan jawaban.
+    Kecocokan kata kunci tidak membedakan dokumen yang membahas sebuah topik
+    dari yang hanya menyebutnya sambil lalu.
 
-    Ukurannya dibalik: dari seluruh topik yang disebut JUDUL dokumen, berapa
-    bagian yang juga ditanyakan pengguna. Judul yang didominasi topik lain
-    mendapat nilai rendah.
-
-    Tiga keadaan dibedakan:
-      * judul tidak memuat topik yang dapat dikenali -> 1.0, tidak ada dasar
-        untuk menghukum;
-      * judul memuat topik tetapi TIDAK satu pun yang ditanyakan -> 0.0,
-        dipakai sebagai penanda oleh `_topical_score`;
-      * ada irisan -> proporsi irisan terhadap seluruh topik judul.
+    Diukur terbalik: dari seluruh topik yang disebut judul, berapa bagian yang
+    juga ditanyakan. Judul tanpa topik yang dikenali bernilai 1.0 (tidak ada
+    dasar menghukum), judul yang seluruhnya membahas hal lain bernilai 0.0.
     """
     if not query_subjects:
         return 1.0
@@ -402,7 +375,7 @@ def retrieve_from_journals(terms: List[str], limit: int = DEFAULT_CANDIDATE_LIMI
                            query_subjects: Optional[set] = None) -> List[EvidenceItem]:
     """Ambil kandidat dari tabel JournalArticle."""
     try:
-        from ...models import JournalArticle
+        JournalArticle = runtime.model("JournalArticle")
     except Exception as exc:  # pragma: no cover
         logger.warning("[RETRIEVAL] JournalArticle tidak tersedia: %s", exc)
         return []
@@ -470,7 +443,7 @@ def retrieve_from_sources(terms: List[str], limit: int = DEFAULT_CANDIDATE_LIMIT
     """Ambil kandidat dari tabel Source + excerpt ClaimSource."""
     try:
         from django.db.models import Q
-        from ...models import ClaimSource
+        ClaimSource = runtime.model("ClaimSource")
     except Exception as exc:  # pragma: no cover
         logger.warning("[RETRIEVAL] ClaimSource tidak tersedia: %s", exc)
         return []
@@ -552,8 +525,8 @@ def retrieve_from_sources(terms: List[str], limit: int = DEFAULT_CANDIDATE_LIMIT
 
 def _training_retrieval_available() -> bool:
     try:
-        from ...ai_adapter import training_modules_available
-        return bool(training_modules_available())
+        available = runtime.service("training_modules_available")
+        return bool(available and available())
     except Exception:
         return False
 
@@ -593,8 +566,9 @@ def retrieve_from_vector_index(query: str, terms: List[str], k: int = 10,
 
     try:
         import sys
-        from ...ai_adapter import TRAINING_SCRIPTS_DIR
-        if str(TRAINING_SCRIPTS_DIR) not in sys.path:
+        scripts_dir = runtime.service("training_scripts_dir")
+        TRAINING_SCRIPTS_DIR = scripts_dir() if scripts_dir else None
+        if TRAINING_SCRIPTS_DIR and str(TRAINING_SCRIPTS_DIR) not in sys.path:
             sys.path.insert(0, str(TRAINING_SCRIPTS_DIR))
         from prompt_and_verify import retrieve_neighbors_from_db  # type: ignore
         neighbors = retrieve_neighbors_from_db(embedding, k=k)
@@ -660,11 +634,8 @@ def rescore_for_query(items, query: str, extra_terms=None):
     kehilangan rujukannya justru pada pembahasan yang sama.
 
     Memakai fungsi penilaian yang sama dengan retrieval biasa, kemiripan makna
-    termasuk. Menghitung leksikalnya saja terdengar cukup untuk kumpulan kecil,
-    tetapi menghasilkan skor yang lebih rendah daripada saat jurnal itu pertama
-    kali terpilih — dan ambang kecukupan lalu menolaknya, sehingga jawaban
-    lanjutan kehilangan rujukan yang justru masih relevan. Embedding pertanyaan
-    sudah di-cache, dan cosine atas belasan baris praktis gratis.
+    termasuk. Menghitung leksikalnya saja memberi skor lebih rendah daripada
+    saat jurnal itu pertama kali terpilih, dan ambang kecukupan lalu menolaknya.
     """
     terms = list(extra_terms or []) + extract_health_concepts(query)
     groups = build_search_term_groups(" ".join([query] + terms))
@@ -714,7 +685,7 @@ def _stored_embeddings(items):
 
     vectors = {}
     try:
-        from ...models import JournalArticle
+        JournalArticle = runtime.model("JournalArticle")
 
         rows = JournalArticle.objects.filter(id__in=ids).values_list("id", "embedding")
         for row_id, raw in rows:

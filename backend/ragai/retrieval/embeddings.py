@@ -25,6 +25,7 @@ menanganinya, bukan menyimpan vektor nol.
 import logging
 import os
 from typing import List, Optional
+from .. import runtime
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,9 @@ def _detect_dimension_from_db() -> Optional[int]:
     try:
         import sys
 
-        from ...ai_adapter import TRAINING_SCRIPTS_DIR
-        if str(TRAINING_SCRIPTS_DIR) not in sys.path:
+        scripts_dir = runtime.service("training_scripts_dir")
+        TRAINING_SCRIPTS_DIR = scripts_dir() if scripts_dir else None
+        if TRAINING_SCRIPTS_DIR and str(TRAINING_SCRIPTS_DIR) not in sys.path:
             sys.path.insert(0, str(TRAINING_SCRIPTS_DIR))
         from ingest_chunks_to_pg import DB_TABLE, connect_db  # type: ignore
 
@@ -123,8 +125,8 @@ def available_provider() -> Optional[str]:
     if os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API"):
         return "gemini"
     try:
-        from ...ai_adapter import training_modules_available
-        if training_modules_available():
+        available = runtime.service("training_modules_available")
+        if available and available():
             return "sentence_transformers"
     except Exception:  # pragma: no cover
         pass
@@ -194,8 +196,9 @@ def _embed_openai(texts: List[str], dims: int) -> List[List[float]]:
 def _embed_training(texts: List[str], dims: int) -> List[List[float]]:
     import sys
 
-    from ...ai_adapter import TRAINING_SCRIPTS_DIR
-    if str(TRAINING_SCRIPTS_DIR) not in sys.path:
+    scripts_dir = runtime.service("training_scripts_dir")
+    TRAINING_SCRIPTS_DIR = scripts_dir() if scripts_dir else None
+    if TRAINING_SCRIPTS_DIR and str(TRAINING_SCRIPTS_DIR) not in sys.path:
         sys.path.insert(0, str(TRAINING_SCRIPTS_DIR))
     from chunk_and_embed import embed_texts_gemini  # type: ignore
 

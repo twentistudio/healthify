@@ -88,6 +88,8 @@ _BLOCK_MESSAGE_ID = (
 
 @dataclass
 class SafetyReport:
+    """Putusan lapisan keamanan beserta jawaban yang mungkin sudah disunting."""
+
     decision: SafetyDecision = SafetyDecision.PASS
     flags: List[SafetyFlag] = field(default_factory=list)
     answer: str = ""
@@ -130,13 +132,9 @@ def detect_high_risk_population(text: str) -> List[str]:
     return [term for term in HIGH_RISK_POPULATIONS if term in low]
 
 
-# Flag UNSUPPORTED_MEDICAL_CLAIM hanya berarti bila TIDAK ADA SATU PUN bagian
-# jawaban yang dapat ditelusuri ke evidence.
-#
-# Penelusuran memakai penanda sitasi [En] dan kecocokan leksikal. Jawaban
-# Bahasa Indonesia atas jurnal berbahasa Inggris kerap gagal dicocokkan secara
-# leksikal, sehingga menandai berdasarkan proporsi menghasilkan peringatan
-# palsu pada jawaban yang sebenarnya sudah bersumber.
+# Ditandai hanya bila tidak ada satu pun bagian jawaban yang tertelusur ke
+# evidence. Menandai berdasarkan proporsi menghasilkan peringatan palsu, sebab
+# jawaban Indonesia atas jurnal Inggris kerap gagal dicocokkan secara leksikal.
 
 
 def validate_response(answer: str,
@@ -154,13 +152,9 @@ def validate_response(answer: str,
     report = SafetyReport(decision=SafetyDecision.PASS, answer=answer)
     combined = f"{user_input}\n{answer}"
 
-    # 1) Kegawatdaruratan — prioritas tertinggi, selalu ditambahkan di depan.
-    #
-    # Deteksi HANYA dari keluhan pengguna. Menyisir teks jawaban ikut memicu
-    # peringatan pada kalimat yang sifatnya edukatif ("dengue dapat berkembang
-    # menjadi sindrom syok dengue"), padahal pengguna tidak sedang mengalaminya.
-    # Peringatan gawat darurat yang muncul di setiap penjelasan justru membuat
-    # pengguna mengabaikannya saat benar-benar dibutuhkan.
+    # 1) Kegawatdaruratan, dideteksi hanya dari keluhan pengguna. Menyisir teks
+    # jawaban memicu peringatan pada kalimat edukatif, dan peringatan yang
+    # muncul di mana-mana justru diabaikan saat benar-benar dibutuhkan.
     emergency_hits = detect_emergency(user_input)
     if emergency_hits:
         report.flags.append(SafetyFlag(

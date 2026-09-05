@@ -24,10 +24,8 @@ def to_consumer_response(response: IntelligenceResponse,
                          include_sources: bool = True) -> Dict[str, Any]:
     """Bentuk response publik untuk endpoint /api/v1/intelligence/query."""
     data: Dict[str, Any] = {
-        # Teks siap tampil, tanpa penanda sitasi. Penanda itu notasi internal;
-        # di layar ia hanya muncul sebagai angka dalam kurung yang tidak berarti
-        # bagi pembaca. Yang membutuhkan pemetaan kalimat ke bukti memakai
-        # `answer_annotated` di bawah.
+        # Tanpa penanda sitasi; yang membutuhkan pemetaan kalimat ke bukti
+        # memakai `answer_annotated`.
         "answer": strip_citation_markers(response.answer),
         "answer_annotated": response.answer,
         "intent": response.intent.value,
@@ -63,26 +61,17 @@ def to_simple_response(response: IntelligenceResponse) -> Dict[str, Any]:
     Bentuk ringkas untuk consumer yang hanya butuh **informasi kesehatan
     beserta sumber jurnalnya**.
 
-    Sengaja TANPA label apa pun (tidak ada valid/hoax/uncertain, tidak ada
-    intent, tidak ada status internal): label verifikasi adalah urusan produk
+    Tanpa label verifikasi, intent, maupun status internal: itu urusan produk
     Healthify, bukan sesuatu yang harus ditafsirkan consumer.
 
     Field:
         answer          teks jawaban siap tampil
-        sources         jurnal pendukung; `url` selalu tautan yang sudah
-                        dipastikan hidup, atau null bila tidak ada
-        has_evidence    False berarti tidak ada bukti memadai dan `answer`
-                        berisi pernyataan jujur soal itu — jangan diproses
-                        seolah jawaban biasa
-        notice          teks peringatan yang WAJIB ditampilkan bila terisi
-                        (mis. keluhan menandakan kondisi gawat darurat)
-        conversation_id kirim balik pada permintaan berikutnya agar konteks
-                        percakapan tersambung
-        sources_reused  True berarti giliran ini memakai jurnal yang sama
-                        dengan giliran sebelumnya di ruang obrolan ini, bukan
-                        hasil pencarian baru. Berguna bagi consumer yang ingin
-                        menampilkan daftar rujukan sekali saja per pembahasan
-                        alih-alih mengulangnya di setiap gelembung pesan.
+        sources         jurnal pendukung; `url` sudah dipastikan hidup
+        has_evidence    False berarti bukti tidak memadai dan `answer` berisi
+                        pernyataan jujur soal itu
+        notice          peringatan yang wajib ditampilkan bila terisi
+        conversation_id kirim balik agar konteks percakapan tersambung
+        sources_reused  True bila rujukannya sama dengan giliran sebelumnya
         request_id      untuk pelaporan masalah
     """
     critical = [

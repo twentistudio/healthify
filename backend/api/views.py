@@ -361,7 +361,7 @@ def translate_text(text: str, target_lang: str) -> str:
     if not text or len(text) < 10:
         return text
 
-    from .intelligence.reasoning import llm
+    from ragai.reasoning import llm
 
     # Gemini hanya dicoba bila memang termasuk provider aktif. Tanpa penjagaan
     # ini, deployment yang sudah full OpenAI tetap membayar satu round-trip
@@ -376,7 +376,7 @@ def translate_text(text: str, target_lang: str) -> str:
 
 def translate_text_llm(text: str, target_lang: str) -> str:
     """Terjemahan memakai rantai provider LLM (OpenAI, dsb)."""
-    from .intelligence.reasoning import llm
+    from ragai.reasoning import llm
 
     lang_name = "English" if target_lang == 'en' else "Indonesian"
     prompt = f"""You are a professional medical translator.
@@ -1312,7 +1312,7 @@ def embed_journal_article(journal: JournalArticle):
     sudah tersimpan di kolom `JournalArticle.embedding` — retrieval tetap jalan
     dari sana maupun secara leksikal.
     """
-    from .intelligence.retrieval.embeddings import embed_text, store_vector
+    from ragai.retrieval.embeddings import embed_text, store_vector
 
     text = f"{journal.title}\n\n{journal.abstract}"
     embedding = embed_text(text)
