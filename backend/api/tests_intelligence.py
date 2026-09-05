@@ -5093,3 +5093,136 @@ class CitationMarkersNeverReachReadersTests(TestCase):
             claim_text="merokok menyebabkan kanker paru")
 
         self.assertNotIn("[E", result["summary"])
+
+
+class PendingKeyIssuanceTests(TestCase):
+    """
+    Menutup jarak antara formulir dan kunci yang sampai ke pemohon. Yang paling
+    penting di sini bukan jalur suksesnya, melainkan bahwa perintah ini aman
+    dijalankan berulang dan tidak meninggalkan kunci hidup tanpa pemilik.
+    """
+
+    def setUp(self):
+        from api.models import ApiAccessRequest
+
+        self.request = ApiAccessRequest.objects.create(
+            name="Dev", email="dev@example.com", organization="Contoh Studio",
+            use_case="Chatbot kesehatan.")
+
+    def _run(self, **kwargs):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("issue_pending_keys", stdout=out, **kwargs)
+        return out.getvalue()
+
+    def test_key_is_issued_and_emailed(self):
+        from api import email_service as service
+        from api.models import ApiAccessRequest, IntelligenceApiKey
+
+        with patch.object(service.email_service, "send_api_key",
+                          return_value=True) as send:
+            self._run()
+
+        send.assert_called_once()
+        self.assertEqual(send.call_args.kwargs["recipient"], "dev@example.com")
+        self.assertEqual(IntelligenceApiKey.objects.filter(is_active=True).count(), 1)
+        self.request.refresh_from_db()
+        self.assertEqual(self.request.status, ApiAccessRequest.STATUS_APPROVED)
+
+    def test_running_twice_issues_only_one_key(self):
+        from api import email_service as service
+        from api.models import IntelligenceApiKey
+
+        with patch.object(service.email_service, "send_api_key", return_value=True) as send:
+            self._run()
+            self._run()
+
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(IntelligenceApiKey.objects.count(), 1)
+
+    def test_a_revoked_key_is_not_silently_reissued(self):
+        """
+        Kunci yang pernah diterbitkan lalu dicabut berarti permintaan itu sudah
+        dilayani. Menerbitkan yang baru diam-diam membatalkan keputusan
+        mencabutnya.
+        """
+        from api import email_service as service
+        from api.models import IntelligenceApiKey
+
+        with patch.object(service.email_service, "send_api_key", return_value=True):
+            self._run()
+        IntelligenceApiKey.objects.update(is_active=False)
+
+        with patch.object(service.email_service, "send_api_key") as send:
+            self._run()
+
+        send.assert_not_called()
+
+    def test_a_failed_send_leaves_no_live_key(self):
+        """
+        Nilai asli kunci hanya pernah ada di dalam surat itu. Bila suratnya
+        tidak sampai, kunci yang aktif tidak dipegang siapa pun.
+        """
+        from api import email_service as service
+        from api.models import IntelligenceApiKey
+
+        with patch.object(service.email_service, "send_api_key", return_value=False):
+            output = self._run()
+
+        self.assertIn("GAGAL", output)
+        self.assertEqual(IntelligenceApiKey.objects.filter(is_active=True).count(), 0)
+
+    def test_dry_run_changes_nothing(self):
+        from api import email_service as service
+        from api.models import IntelligenceApiKey
+
+        with patch.object(service.email_service, "send_api_key") as send:
+            output = self._run(dry_run=True)
+
+        send.assert_not_called()
+        self.assertEqual(IntelligenceApiKey.objects.count(), 0)
+        self.assertIn("dev@example.com", output)
+
+    def test_rejected_requests_are_skipped(self):
+        from api import email_service as service
+        from api.models import ApiAccessRequest
+
+        self.request.status = ApiAccessRequest.STATUS_REJECTED
+        self.request.save(update_fields=["status"])
+
+        with patch.object(service.email_service, "send_api_key") as send:
+            self._run()
+
+        send.assert_not_called()
+
+    def test_consumer_name_is_readable_and_unique(self):
+        from api import email_service as service
+        from api.models import ApiAccessRequest, IntelligenceApiKey
+
+        ApiAccessRequest.objects.create(
+            name="Lain", email="lain@example.com", organization="Contoh Studio",
+            use_case="Produk lain.")
+
+        with patch.object(service.email_service, "send_api_key", return_value=True):
+            self._run()
+
+        consumers = sorted(IntelligenceApiKey.objects.values_list("consumer", flat=True))
+        self.assertEqual(consumers[0], "contoh-studio")
+        self.assertTrue(consumers[1].startswith("contoh-studio-"))
+        self.assertEqual(len(set(consumers)), 2)
+
+    def test_email_local_part_is_used_when_no_organization(self):
+        from api import email_service as service
+        from api.models import ApiAccessRequest, IntelligenceApiKey
+
+        ApiAccessRequest.objects.all().delete()
+        ApiAccessRequest.objects.create(
+            name="Arya", email="arya.zaky@example.com", use_case="Riset.")
+
+        with patch.object(service.email_service, "send_api_key", return_value=True):
+            self._run()
+
+        self.assertEqual(IntelligenceApiKey.objects.get().consumer, "arya-zaky")
